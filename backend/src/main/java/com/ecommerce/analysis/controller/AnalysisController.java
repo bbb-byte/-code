@@ -39,8 +39,8 @@ public class AnalysisController {
     @ApiOperation("获取每日行为趋势")
     @GetMapping("/daily-trend")
     public Result<List<Map<String, Object>>> getDailyTrend(
-            @RequestParam(defaultValue = "2017-11-25") String startDate,
-            @RequestParam(defaultValue = "2017-12-03") String endDate) {
+            @RequestParam(required = false) String startDate,
+            @RequestParam(required = false) String endDate) {
         List<Map<String, Object>> data = userBehaviorService.getDailyBehaviorTrend(startDate, endDate);
         return Result.success(data);
     }

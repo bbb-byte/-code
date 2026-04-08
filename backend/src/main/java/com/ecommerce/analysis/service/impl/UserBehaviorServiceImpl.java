@@ -12,6 +12,7 @@ import org.springframework.stereotype.Service;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 
 /**
  * 用户行为服务实现类
@@ -95,6 +96,14 @@ public class UserBehaviorServiceImpl extends ServiceImpl<UserBehaviorMapper, Use
 
     @Override
     public List<Map<String, Object>> getDailyBehaviorTrend(String startDate, String endDate) {
+        if (isBlank(startDate) || isBlank(endDate)) {
+            Map<String, Object> latestDateRange = userBehaviorMapper.getLatestDateRange();
+            if (latestDateRange == null || latestDateRange.get("start_date") == null || latestDateRange.get("end_date") == null) {
+                return java.util.Collections.emptyList();
+            }
+            startDate = Objects.toString(latestDateRange.get("start_date"), null);
+            endDate = Objects.toString(latestDateRange.get("end_date"), null);
+        }
         return userBehaviorMapper.getDailyBehaviorStats(startDate, endDate);
     }
 
@@ -136,5 +145,9 @@ public class UserBehaviorServiceImpl extends ServiceImpl<UserBehaviorMapper, Use
     @Override
     public List<UserBehavior> getLatestBehaviors(int limit) {
         return userBehaviorMapper.getLatestBehaviors(limit);
+    }
+
+    private boolean isBlank(String value) {
+        return value == null || value.trim().isEmpty();
     }
 }

@@ -12,7 +12,10 @@ export function getBehaviorDistribution() {
 
 // 获取每日行为趋势
 export function getDailyTrend(startDate, endDate) {
-    return http.get('/analysis/daily-trend', { params: { startDate, endDate } })
+    const params = {}
+    if (startDate) params.startDate = startDate
+    if (endDate) params.endDate = endDate
+    return http.get('/analysis/daily-trend', { params })
 }
 
 // 获取热门商品(按浏览量)

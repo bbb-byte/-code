@@ -12,10 +12,8 @@
           <div class="stat-content">
             <div class="stat-label">{{ stat.label }}</div>
             <div class="stat-value">{{ formatNumber(stats[stat.key]) }}</div>
-            <div class="stat-trend" :class="stat.trendType">
-              <span>{{ stat.trend }}</span>
-              <el-icon v-if="stat.trendType === 'up'"><Top /></el-icon>
-              <el-icon v-else><Bottom /></el-icon>
+            <div class="stat-trend neutral">
+              <span>{{ stat.caption }}</span>
             </div>
           </div>
           <el-icon class="stat-icon"><component :is="stat.icon" /></el-icon>
@@ -75,7 +73,7 @@
 import { ref, onMounted, onUnmounted, markRaw } from 'vue'
 import { getDashboard } from '@/api/analysis'
 import * as echarts from 'echarts'
-import { User, Goods, Document, TrendCharts, Top, Bottom, PieChart, DataLine, Trophy, UserFilled } from '@element-plus/icons-vue'
+import { User, Goods, Document, TrendCharts, PieChart, DataLine, Trophy, UserFilled } from '@element-plus/icons-vue'
 
 const stats = ref({
   totalUsers: 0,
@@ -85,10 +83,10 @@ const stats = ref({
 })
 
 const statCards = [
-  { key: 'totalUsers', label: '总用户数', icon: markRaw(User), trend: '+12.5%', trendType: 'up' },
-  { key: 'totalProducts', label: '商品总数', icon: markRaw(Goods), trend: '+8.2%', trendType: 'up' },
-  { key: 'totalBehaviors', label: '总交互次数', icon: markRaw(Document), trend: '+25.6%', trendType: 'up' },
-  { key: 'conversionRate', label: '购买转化率', icon: markRaw(TrendCharts), trend: '-2.1%', trendType: 'down' }
+  { key: 'totalUsers', label: '总用户数', icon: markRaw(User), caption: '当前已导入用户' },
+  { key: 'totalProducts', label: '商品总数', icon: markRaw(Goods), caption: '当前已导入商品' },
+  { key: 'totalBehaviors', label: '总交互次数', icon: markRaw(Document), caption: '全量行为记录' },
+  { key: 'conversionRate', label: '购买转化率', icon: markRaw(TrendCharts), caption: '浏览到购买用户转化' }
 ]
 
 // 图表引用
@@ -210,7 +208,7 @@ const initCharts = (data) => {
   // 3. 热门商品 (圆角柱状图)
   if (hotProductsChartRef.value && data.hotProducts) {
     hotProductsChart = echarts.init(hotProductsChartRef.value)
-    const products = data.hotProducts.map(item => '商品' + item.item_id)
+    const products = data.hotProducts.map(item => item.product_name || (item.brand ? `${item.brand} #${item.item_id}` : `ID ${item.item_id}`))
     const buyCount = data.hotProducts.map(item => item.buy_count)
     
     hotProductsChart.setOption({

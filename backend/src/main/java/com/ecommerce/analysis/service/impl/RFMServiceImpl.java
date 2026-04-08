@@ -34,9 +34,6 @@ public class RFMServiceImpl implements RFMService {
     @Autowired
     private UserProfileMapper userProfileMapper;
 
-    // 基准时间点(数据集最大时间 2017-12-03)
-    private static final LocalDateTime BASE_TIME = LocalDateTime.of(2017, 12, 4, 0, 0, 0);
-
     @Override
     @Transactional
     public void calculateAllUserRFM() {
@@ -54,6 +51,7 @@ public class RFMServiceImpl implements RFMService {
         List<Integer> buyerRecency = new ArrayList<>();
         List<Integer> buyerFrequency = new ArrayList<>();
         List<BigDecimal> buyerMonetary = new ArrayList<>();
+        LocalDateTime baseTime = resolveBaseTime(summaryList);
 
         for (Map<String, Object> summary : summaryList) {
             UserProfile profile = new UserProfile();
@@ -91,7 +89,7 @@ public class RFMServiceImpl implements RFMService {
 
             int recency = 999; // 默认值（未购买用户）
             if (lastBuyTime != null) {
-                recency = (int) ChronoUnit.DAYS.between(lastBuyTime, BASE_TIME);
+                recency = (int) ChronoUnit.DAYS.between(lastBuyTime, baseTime);
                 if (recency < 0)
                     recency = 0;
             }
@@ -109,10 +107,6 @@ public class RFMServiceImpl implements RFMService {
                 } else if (amountObj instanceof Number) {
                     monetary = BigDecimal.valueOf(((Number) amountObj).doubleValue());
                 }
-            }
-            // 如果没有真实金额数据，则用购买次数*模拟单价
-            if (monetary.compareTo(BigDecimal.ZERO) == 0 && totalBuys > 0) {
-                monetary = BigDecimal.valueOf(totalBuys * 35.0); // 模拟平均客单价35元
             }
             profile.setMonetary(monetary);
 
@@ -198,6 +192,24 @@ public class RFMServiceImpl implements RFMService {
 
         log.info("RFM计算完成，共处理 {} 个用户（购买用户: {}, 未转化: {}）",
                 allProfiles.size(), buyerProfiles.size(), nonBuyerProfiles.size());
+    }
+
+    private LocalDateTime resolveBaseTime(List<Map<String, Object>> summaryList) {
+        LocalDateTime maxActiveTime = summaryList.stream()
+                .map(summary -> {
+                    Object lastActiveObj = summary.get("last_active_time");
+                    if (lastActiveObj instanceof LocalDateTime) {
+                        return (LocalDateTime) lastActiveObj;
+                    }
+                    if (lastActiveObj instanceof java.sql.Timestamp) {
+                        return ((java.sql.Timestamp) lastActiveObj).toLocalDateTime();
+                    }
+                    return null;
+                })
+                .filter(Objects::nonNull)
+                .max(LocalDateTime::compareTo)
+                .orElse(LocalDateTime.now());
+        return maxActiveTime.plusDays(1);
     }
 
     @Override

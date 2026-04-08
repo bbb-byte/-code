@@ -33,7 +33,7 @@ public class UserProfile {
     private Integer frequency;
 
     /**
-     * Monetary - 消费金额(由于数据集无金额，用购买次数模拟)
+     * Monetary - 消费金额(基于真实价格字段聚合)
      */
     private BigDecimal monetary;
 

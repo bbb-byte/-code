@@ -2,6 +2,7 @@ package com.ecommerce.analysis.entity;
 
 import com.baomidou.mybatisplus.annotation.*;
 import lombok.Data;
+import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
 /**
@@ -20,9 +21,14 @@ public class Product {
     private Long itemId;
 
     /**
-     * 商品名称
+     * 商品展示名称
      */
     private String name;
+
+    /**
+     * 商品品牌
+     */
+    private String brand;
 
     /**
      * 商品类目ID
@@ -30,9 +36,14 @@ public class Product {
     private Long categoryId;
 
     /**
-     * 商品类目名称
+     * 商品类目编码/名称
      */
     private String categoryName;
+
+    /**
+     * 商品价格
+     */
+    private BigDecimal price;
 
     /**
      * 浏览次数

@@ -4,6 +4,7 @@
 # ===========================
 UserBehavior.csv
 UserBehavior.csv.zip
+archive/
 
 # ===========================
 # macOS
@@ -73,3 +74,4 @@ env/
 .env.local
 application-local.yml
 application-local.properties
+.omx/

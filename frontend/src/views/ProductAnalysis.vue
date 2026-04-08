@@ -71,6 +71,20 @@ const loadData = async () => {
   }
 }
 
+const productLabel = (item) => {
+  if (!item) return ''
+  if (item.brand) return `${item.brand} #${item.item_id}`
+  if (item.product_name) {
+    return item.product_name
+  }
+  return `ID ${item.item_id}`
+}
+
+const categoryLabel = (item) => {
+  if (!item) return ''
+  return item.category_name || `ID ${item.category_id}`
+}
+
 const initCharts = (buyData, viewData, categoryData) => {
   // 浅色主题配色
   const theme = {
@@ -92,7 +106,7 @@ const initCharts = (buyData, viewData, categoryData) => {
       },
       xAxis: {
         type: 'category',
-        data: buyData.map(item => '商品' + item.item_id),
+        data: buyData.map(productLabel),
         axisLabel: { rotate: 45, interval: 0, color: theme.textSub },
         axisLine: { lineStyle: { color: theme.axisLine } },
         axisTick: { show: false }
@@ -130,7 +144,7 @@ const initCharts = (buyData, viewData, categoryData) => {
       },
       xAxis: {
         type: 'category',
-        data: viewData.map(item => '商品' + item.item_id),
+        data: viewData.map(productLabel),
         axisLabel: { rotate: 45, interval: 0, color: theme.textSub },
         axisLine: { lineStyle: { color: theme.axisLine } },
         axisTick: { show: false }
@@ -177,7 +191,7 @@ const initCharts = (buyData, viewData, categoryData) => {
         radius: ['40%', '70%'],
         center: ['50%', '45%'],
         data: categoryData.map(item => ({
-          name: '类目' + item.category_id,
+          name: categoryLabel(item),
           value: item.count
         })),
         itemStyle: { 
@@ -196,7 +210,9 @@ const initCharts = (buyData, viewData, categoryData) => {
   // 商品行为对比
   if (compareChartRef.value && buyData && viewData) {
     compareChart = echarts.init(compareChartRef.value)
-    const products = buyData.slice(0, 5).map(item => '商品' + item.item_id)
+    const topProducts = buyData.slice(0, 5)
+    const viewMap = Object.fromEntries(viewData.map(item => [String(item.item_id), item.view_count]))
+    const products = topProducts.map(productLabel)
     
     compareChart.setOption({
       tooltip: { 
@@ -233,7 +249,7 @@ const initCharts = (buyData, viewData, categoryData) => {
         { 
           name: '浏览', 
           type: 'bar', 
-          data: viewData.slice(0, 5).map(item => item.view_count),
+          data: topProducts.map(item => viewMap[String(item.item_id)] || 0),
           itemStyle: { 
             color: '#4f46e5',
             borderRadius: [4, 4, 0, 0]
@@ -242,7 +258,7 @@ const initCharts = (buyData, viewData, categoryData) => {
         { 
           name: '购买', 
           type: 'bar', 
-          data: buyData.slice(0, 5).map(item => item.buy_count),
+          data: topProducts.map(item => item.buy_count),
           itemStyle: { 
             color: '#10b981',
             borderRadius: [4, 4, 0, 0]

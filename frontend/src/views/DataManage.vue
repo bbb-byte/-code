@@ -39,7 +39,7 @@
           <div class="card-title">数据导入</div>
           <el-form :model="importForm" label-width="80px" label-position="left">
             <el-form-item label="文件路径">
-              <el-input v-model="importForm.filePath" placeholder="CSV文件绝对路径" />
+              <el-input v-model="importForm.filePath" placeholder="CSV文件绝对路径（支持 archive/2019-Oct.csv）" />
             </el-form-item>
             <el-form-item label="批量大小">
               <el-input-number v-model="importForm.batchSize" :min="1000" :max="10000" :step="1000" style="width: 100%" />
@@ -135,14 +135,19 @@
       <el-table :data="latestBehaviors" stripe style="width: 100%" v-loading="loadingLatest">
         <el-table-column prop="userId" label="用户ID" width="120" />
         <el-table-column prop="itemId" label="商品ID" width="120" />
-        <el-table-column prop="categoryId" label="类目">
+        <el-table-column prop="categoryId" label="类目ID" width="140">
           <template #default="scope">
-            <el-tag effect="plain" type="info">{{ formatCategory(scope.row.categoryId) }}</el-tag>
+            <el-tag effect="plain" type="info">{{ scope.row.categoryId }}</el-tag>
           </template>
         </el-table-column>
         <el-table-column prop="behaviorType" label="行为类型" width="120">
           <template #default="scope">
             <el-tag :type="getTagType(scope.row.behaviorType)" effect="light">{{ scope.row.behaviorType }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="价格" width="120">
+          <template #default="scope">
+            {{ formatPrice(scope.row.unitPrice) }}
           </template>
         </el-table-column>
         <el-table-column prop="behaviorDateTime" label="时间" />
@@ -183,7 +188,7 @@ const crawlResult = ref(null)
 const latestBehaviors = ref([])
 
 const importForm = reactive({
-  filePath: '/Users/leiminghao/Desktop/论文/code/UserBehavior.csv',
+  filePath: '/Users/leiminghao/Desktop/论文code/-code/archive/2019-Oct.csv',
   batchSize: 5000,
   maxRows: 100000
 })
@@ -324,16 +329,10 @@ const getTagType = (type) => {
   return map[type] || 'info'
 }
 
-const formatCategory = (id) => {
-  const map = {
-    1101: '📚 文学小说',
-    1102: '🔬 科学技术',
-    1103: '🏛 人文历史',
-    1104: '💰 经济管理',
-    1105: '🎨 艺术设计',
-    1106: '🏃 生活百科'
-  }
-  return map[id] || `其他 (${id})`
+const formatPrice = (value) => {
+  if (value === null || value === undefined || value === '') return '-'
+  const num = Number(value)
+  return Number.isFinite(num) ? `¥${num.toFixed(2)}` : value
 }
 
 const addLog = (message, type = 'info') => {

@@ -47,7 +47,7 @@
 
 <script setup>
 import { ref, onMounted, onUnmounted, markRaw } from 'vue'
-import { getDashboard, getDailyTrend, getHourlyDistribution } from '@/api/analysis'
+import { getDashboard, getDailyTrend } from '@/api/analysis'
 import * as echarts from 'echarts'
 import { View, ShoppingCart, Star, Goods } from '@element-plus/icons-vue'
 
@@ -81,20 +81,23 @@ const formatNumber = (num) => {
 
 const loadData = async () => {
   try {
-    const res = await getDashboard()
+    const [dashboardRes, trendRes] = await Promise.all([
+      getDashboard(),
+      getDailyTrend()
+    ])
     stats.value = {
-      totalViews: res.data.totalViews,
-      totalCarts: res.data.totalCarts,
-      totalFavs: res.data.totalFavs,
-      totalBuys: res.data.totalBuys
+      totalViews: dashboardRes.data.totalViews,
+      totalCarts: dashboardRes.data.totalCarts,
+      totalFavs: dashboardRes.data.totalFavs,
+      totalBuys: dashboardRes.data.totalBuys
     }
-    initCharts(res.data)
+    initCharts(dashboardRes.data, trendRes.data)
   } catch (error) {
     console.error('加载数据失败:', error)
   }
 }
 
-const initCharts = (data) => {
+const initCharts = (data, trendRows) => {
   const theme = {
     textMain: '#334155',
     textSub: '#94a3b8',
@@ -102,13 +105,20 @@ const initCharts = (data) => {
     splitLine: '#f1f5f9'
   }
 
-  // 每日趋势图 (模拟数据，因为API可能未准备好)
   if (trendChartRef.value) {
     trendChart = echarts.init(trendChartRef.value)
-    const dates = ['11-25', '11-26', '11-27', '11-28', '11-29', '11-30', '12-01', '12-02', '12-03']
-    const pvData = dates.map(() => Math.floor(Math.random() * 100000) + 50000)
-    const buyData = dates.map(() => Math.floor(Math.random() * 5000) + 1000)
-    const cartData = dates.map(() => Math.floor(Math.random() * 10000) + 3000)
+    const grouped = {}
+    ;(trendRows || []).forEach(row => {
+      const date = row.date
+      if (!grouped[date]) {
+        grouped[date] = { pv: 0, cart: 0, buy: 0 }
+      }
+      grouped[date][row.behavior_type] = row.count
+    })
+    const dates = Object.keys(grouped).sort()
+    const pvData = dates.map(date => grouped[date].pv || 0)
+    const buyData = dates.map(date => grouped[date].buy || 0)
+    const cartData = dates.map(date => grouped[date].cart || 0)
 
     trendChart.setOption({
       tooltip: { 

@@ -16,11 +16,9 @@ import java.util.Map;
 public interface UserBehaviorMapper extends BaseMapper<UserBehavior> {
 
         /**
-         * 获取行为类型统计 (优化：统计最近活跃的一天)
+         * 获取行为类型统计
          */
-        @Select("SELECT behavior_type, COUNT(*) as count FROM user_behavior " +
-                        "WHERE behavior_date_time >= (SELECT DATE(MAX(behavior_date_time)) FROM user_behavior) " +
-                        "GROUP BY behavior_type")
+        @Select("SELECT behavior_type, COUNT(*) as count FROM user_behavior GROUP BY behavior_type")
         List<Map<String, Object>> countByBehaviorType();
 
         /**
@@ -28,7 +26,7 @@ public interface UserBehaviorMapper extends BaseMapper<UserBehavior> {
          */
         @Select("SELECT DATE(behavior_date_time) as date, behavior_type, COUNT(*) as count " +
                         "FROM user_behavior " +
-                        "WHERE behavior_date_time BETWEEN #{startDate} AND #{endDate} " +
+                        "WHERE behavior_date_time BETWEEN #{startDate} AND DATE_ADD(#{endDate}, INTERVAL 1 DAY) " +
                         "GROUP BY DATE(behavior_date_time), behavior_type " +
                         "ORDER BY date")
         List<Map<String, Object>> getDailyBehaviorStats(@Param("startDate") String startDate,
@@ -37,25 +35,44 @@ public interface UserBehaviorMapper extends BaseMapper<UserBehavior> {
         /**
          * 获取热门商品(按浏览量)
          */
-        @Select("SELECT item_id, COUNT(*) as view_count " +
-                        "FROM user_behavior WHERE behavior_type = 'pv' " +
-                        "GROUP BY item_id ORDER BY view_count DESC LIMIT #{limit}")
+        @Select("SELECT ub.item_id, " +
+                        "COALESCE(NULLIF(MAX(p.name), ''), CONCAT('商品#', ub.item_id)) as product_name, " +
+                        "MAX(p.brand) as brand, " +
+                        "MAX(p.category_name) as category_name, " +
+                        "MAX(p.price) as price, " +
+                        "COUNT(*) as view_count " +
+                        "FROM user_behavior ub " +
+                        "LEFT JOIN product p ON ub.item_id = p.item_id " +
+                        "WHERE ub.behavior_type = 'pv' " +
+                        "GROUP BY ub.item_id ORDER BY view_count DESC LIMIT #{limit}")
         List<Map<String, Object>> getHotProductsByView(@Param("limit") int limit);
 
         /**
          * 获取热门商品(按购买量)
          */
-        @Select("SELECT item_id, COUNT(*) as buy_count " +
-                        "FROM user_behavior WHERE behavior_type = 'buy' " +
-                        "GROUP BY item_id ORDER BY buy_count DESC LIMIT #{limit}")
+        @Select("SELECT ub.item_id, " +
+                        "COALESCE(NULLIF(MAX(p.name), ''), CONCAT('商品#', ub.item_id)) as product_name, " +
+                        "MAX(p.brand) as brand, " +
+                        "MAX(p.category_name) as category_name, " +
+                        "MAX(p.price) as price, " +
+                        "COUNT(*) as buy_count " +
+                        "FROM user_behavior ub " +
+                        "LEFT JOIN product p ON ub.item_id = p.item_id " +
+                        "WHERE ub.behavior_type = 'buy' " +
+                        "GROUP BY ub.item_id ORDER BY buy_count DESC LIMIT #{limit}")
         List<Map<String, Object>> getHotProductsByBuy(@Param("limit") int limit);
 
         /**
          * 获取热门类目
          */
-        @Select("SELECT category_id, COUNT(*) as count " +
-                        "FROM user_behavior WHERE behavior_type = 'buy' " +
-                        "GROUP BY category_id ORDER BY count DESC LIMIT #{limit}")
+        @Select("SELECT ub.category_id, " +
+                        "COALESCE(NULLIF(MAX(p.category_name), ''), CONCAT('类目#', ub.category_id)) as category_name, " +
+                        "MAX(p.price) as price, " +
+                        "COUNT(*) as count " +
+                        "FROM user_behavior ub " +
+                        "LEFT JOIN product p ON ub.item_id = p.item_id " +
+                        "WHERE ub.behavior_type = 'buy' " +
+                        "GROUP BY ub.category_id ORDER BY count DESC LIMIT #{limit}")
         List<Map<String, Object>> getHotCategories(@Param("limit") int limit);
 
         /**
@@ -89,11 +106,10 @@ public interface UserBehaviorMapper extends BaseMapper<UserBehavior> {
         Map<String, Object> getConversionFunnel();
 
         /**
-         * 获取每小时行为分布 (优化：优先展示最近活跃的一天，如果没有则展示历史汇总)
+         * 获取每小时行为分布
          */
         @Select("SELECT HOUR(behavior_date_time) as hour, COUNT(*) as count " +
                         "FROM user_behavior " +
-                        "WHERE behavior_date_time >= (SELECT DATE(MAX(behavior_date_time)) FROM user_behavior) " +
                         "GROUP BY HOUR(behavior_date_time) ORDER BY hour")
         List<Map<String, Object>> getHourlyDistribution();
 
@@ -120,4 +136,18 @@ public interface UserBehaviorMapper extends BaseMapper<UserBehavior> {
          */
         @Select("SELECT * FROM user_behavior ORDER BY id DESC LIMIT #{limit}")
         List<UserBehavior> getLatestBehaviors(@Param("limit") int limit);
+
+        /**
+         * 获取最大行为时间
+         */
+        @Select("SELECT MAX(behavior_date_time) FROM user_behavior")
+        java.time.LocalDateTime getMaxBehaviorDateTime();
+
+        /**
+         * 获取最新数据时间窗口
+         */
+        @Select("SELECT DATE(MAX(behavior_date_time)) as end_date, " +
+                        "DATE(DATE_SUB(MAX(behavior_date_time), INTERVAL 13 DAY)) as start_date " +
+                        "FROM user_behavior")
+        Map<String, Object> getLatestDateRange();
 }

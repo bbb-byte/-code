@@ -1,6 +1,8 @@
 package com.ecommerce.analysis.service.impl;
 
+import com.ecommerce.analysis.entity.Product;
 import com.ecommerce.analysis.entity.UserBehavior;
+import com.ecommerce.analysis.mapper.ProductMapper;
 import com.ecommerce.analysis.mapper.UserBehaviorMapper;
 import com.ecommerce.analysis.service.DataImportService;
 import lombok.extern.slf4j.Slf4j;
@@ -13,9 +15,14 @@ import org.springframework.stereotype.Service;
 
 import java.io.BufferedReader;
 import java.io.FileReader;
+import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
+import java.time.ZoneOffset;
+import java.time.format.DateTimeFormatter;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -26,10 +33,12 @@ import java.util.concurrent.atomic.AtomicLong;
 @Service
 public class DataImportServiceImpl implements DataImportService {
 
+    private static final ZoneId SYSTEM_ZONE = ZoneId.of("Asia/Shanghai");
+    private static final DateTimeFormatter ARCHIVE_TIME_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+
     @Autowired
     private SqlSessionFactory sqlSessionFactory;
 
-    // 导入状态
     private final AtomicBoolean importing = new AtomicBoolean(false);
     private final AtomicLong processedRows = new AtomicLong(0);
     private final AtomicLong totalRows = new AtomicLong(0);
@@ -48,60 +57,66 @@ public class DataImportServiceImpl implements DataImportService {
         processedRows.set(0);
         totalRows.set(maxRows > 0 ? maxRows : Long.MAX_VALUE);
 
-        long importedCount = 0;
+        try (SqlSession sqlSession = sqlSessionFactory.openSession(ExecutorType.BATCH, false);
+                BufferedReader reader = new BufferedReader(new FileReader(filePath))) {
+            UserBehaviorMapper behaviorMapper = sqlSession.getMapper(UserBehaviorMapper.class);
+            ProductMapper productMapper = sqlSession.getMapper(ProductMapper.class);
+            Map<Long, ProductSnapshot> syncedProducts = new HashMap<>();
 
-        // 使用 ExecutorType.BATCH 开启批处理模式，关闭自动提交
-        try (SqlSession sqlSession = sqlSessionFactory.openSession(ExecutorType.BATCH, false)) {
-            UserBehaviorMapper batchMapper = sqlSession.getMapper(UserBehaviorMapper.class);
+            long importedCount = 0;
+            long startTime = System.currentTimeMillis();
+            String line = readFirstDataLine(reader);
 
-            try (BufferedReader reader = new BufferedReader(new FileReader(filePath))) {
-                String line;
-                long lineNumber = 0;
+            if (line == null) {
+                log.warn("导入文件为空: {}", filePath);
+                return;
+            }
 
-                log.info("开始导入数据文件: {}", filePath);
-                long startTime = System.currentTimeMillis();
+            DatasetFormat datasetFormat = detectFormat(line);
+            if (isHeaderLine(line, datasetFormat)) {
+                line = reader.readLine();
+            }
 
-                while ((line = reader.readLine()) != null && !stopFlag) {
-                    if (line.trim().isEmpty()) {
-                        continue;
-                    }
-                    if (maxRows > 0 && lineNumber >= maxRows) {
+            log.info("开始导入数据文件: {}，识别格式: {}", filePath, datasetFormat);
+
+            while (line != null && !stopFlag) {
+                if (!line.trim().isEmpty()) {
+                    if (maxRows > 0 && importedCount >= maxRows) {
                         break;
                     }
 
                     try {
-                        UserBehavior behavior = parseCsvLine(line);
-                        if (behavior != null) {
-                            batchMapper.insert(behavior);
-                            lineNumber++;
+                        ParsedRow parsedRow = parseCsvLine(line, datasetFormat);
+                        if (parsedRow != null && parsedRow.behavior != null) {
+                            behaviorMapper.insert(parsedRow.behavior);
                             importedCount++;
-                            processedRows.set(lineNumber);
+                            processedRows.set(importedCount);
 
-                            // 每累积 batchSize 条执行一次 flushStatements，集中提交
-                            if (lineNumber % batchSize == 0) {
+                            syncProductMetadata(productMapper, syncedProducts, parsedRow.product);
+
+                            if (importedCount % batchSize == 0) {
                                 sqlSession.flushStatements();
                                 sqlSession.commit();
-                                if (lineNumber % 100000 == 0) {
-                                    log.info("已导入 {} 条记录...", lineNumber);
+                                if (importedCount % 100000 == 0) {
+                                    log.info("已导入 {} 条记录...", importedCount);
                                 }
                             }
                         }
                     } catch (Exception e) {
-                        log.warn("解析行 {} 失败: {}", lineNumber, e.getMessage());
+                        log.warn("解析第 {} 条记录失败: {}", importedCount + 1, e.getMessage());
                     }
                 }
 
-                // 提交剩余未满 batchSize 的数据
-                sqlSession.flushStatements();
-                sqlSession.commit();
-
-                long duration = System.currentTimeMillis() - startTime;
-                log.info("数据导入完成！共导入 {} 条记录，耗时 {} 秒", importedCount, duration / 1000);
-
-            } catch (Exception e) {
-                sqlSession.rollback();
-                log.error("数据导入失败: {}", e.getMessage(), e);
+                line = reader.readLine();
             }
+
+            sqlSession.flushStatements();
+            sqlSession.commit();
+
+            long duration = System.currentTimeMillis() - startTime;
+            log.info("数据导入完成，共导入 {} 条记录，耗时 {} 秒", importedCount, duration / 1000);
+        } catch (Exception e) {
+            log.error("数据导入失败: {}", e.getMessage(), e);
         } finally {
             importing.set(false);
         }
@@ -126,74 +141,204 @@ public class DataImportServiceImpl implements DataImportService {
         log.info("正在停止导入...");
     }
 
-    /**
-     * 解析CSV行数据
-     * 新格式: user_id,item_id,category_id,behavior_type,timestamp,unit_price,qty
-     * 兼容格式: user_id,item_id,category_id,behavior_type,timestamp,price
-     * 旧格式: user_id,item_id,category_id,behavior_type,timestamp
-     */
-    private UserBehavior parseCsvLine(String line) {
-        String[] parts = line.split(",");
+    private String readFirstDataLine(BufferedReader reader) throws Exception {
+        String line;
+        while ((line = reader.readLine()) != null) {
+            if (!line.trim().isEmpty()) {
+                return line;
+            }
+        }
+        return null;
+    }
+
+    ParsedRow parseCsvLine(String line, DatasetFormat datasetFormat) {
+        return datasetFormat == DatasetFormat.ARCHIVE ? parseArchiveCsvLine(line) : parseLegacyCsvLine(line);
+    }
+
+    ParsedRow parseLegacyCsvLine(String line) {
+        String[] parts = line.split(",", -1);
         if (parts.length < 5) {
             return null;
         }
 
         try {
-            UserBehavior behavior = new UserBehavior();
-
             Long userId = Long.parseLong(parts[0].trim());
             Long itemId = Long.parseLong(parts[1].trim());
             Long categoryId = Long.parseLong(parts[2].trim());
-            String behaviorType = parts[3].trim();
+            String behaviorType = normalizeBehaviorType(parts[3].trim());
             long timestamp = Long.parseLong(parts[4].trim());
-
-            behavior.setUserId(userId);
-            behavior.setItemId(itemId);
-            behavior.setCategoryId(categoryId);
-            behavior.setBehaviorType(behaviorType);
-            behavior.setBehaviorTime(timestamp);
-
-            // 生成事件唯一ID (用于去重)
-            String rawKey = userId + "_" + itemId + "_" + behaviorType + "_" + timestamp;
-            behavior.setEventId(generateMd5(rawKey));
-
-            // 转换时间戳为日期时间
-            LocalDateTime dateTime = LocalDateTime.ofInstant(
-                    Instant.ofEpochSecond(timestamp),
-                    ZoneId.of("Asia/Shanghai"));
-            behavior.setBehaviorDateTime(dateTime);
-
-            // 解析价格字段（新格式支持，旧格式默认为0）
-            if (parts.length >= 6 && !parts[5].trim().isEmpty()) {
-                try {
-                    behavior.setUnitPrice(new java.math.BigDecimal(parts[5].trim()));
-                } catch (NumberFormatException e) {
-                    behavior.setUnitPrice(java.math.BigDecimal.ZERO);
-                }
-            } else {
-                behavior.setUnitPrice(java.math.BigDecimal.ZERO);
+            if (behaviorType == null) {
+                return null;
             }
 
-            // 解析数量字段（默认1）
-            if (parts.length >= 7 && !parts[6].trim().isEmpty()) {
-                try {
-                    behavior.setQty(Integer.parseInt(parts[6].trim()));
-                } catch (NumberFormatException e) {
-                    behavior.setQty(1);
-                }
-            } else {
-                behavior.setQty(1);
-            }
-
-            return behavior;
+            UserBehavior behavior = buildBaseBehavior(userId, itemId, categoryId, behaviorType, timestamp);
+            behavior.setUnitPrice(parseDecimal(parts, 5));
+            behavior.setQty(parseInteger(parts, 6, 1));
+            return new ParsedRow(behavior, null);
         } catch (NumberFormatException e) {
             return null;
         }
     }
 
-    /**
-     * 生成MD5哈希值
-     */
+    ParsedRow parseArchiveCsvLine(String line) {
+        String[] parts = line.split(",", -1);
+        if (parts.length < 9) {
+            return null;
+        }
+
+        try {
+            String behaviorType = normalizeBehaviorType(parts[1].trim());
+            if (behaviorType == null) {
+                return null;
+            }
+
+            Long itemId = Long.parseLong(parts[2].trim());
+            Long categoryId = Long.parseLong(parts[3].trim());
+            Long userId = Long.parseLong(parts[7].trim());
+            String session = emptyToNull(parts[8]);
+
+            LocalDateTime utcTime = LocalDateTime.parse(parts[0].trim().replace(" UTC", ""), ARCHIVE_TIME_FORMATTER);
+            long timestamp = utcTime.toEpochSecond(ZoneOffset.UTC);
+            LocalDateTime eventTime = LocalDateTime.ofInstant(Instant.ofEpochSecond(timestamp), SYSTEM_ZONE);
+
+            UserBehavior behavior = buildBaseBehavior(userId, itemId, categoryId, behaviorType, timestamp);
+            behavior.setBehaviorDateTime(eventTime);
+            behavior.setUnitPrice(parseDecimal(parts, 6));
+            behavior.setQty(1);
+            behavior.setEventId(generateMd5(userId + "_" + itemId + "_" + behaviorType + "_" + timestamp + "_" + session));
+
+            Product product = buildProduct(itemId, categoryId, parts[4], parts[5], behavior.getUnitPrice());
+            return new ParsedRow(behavior, product);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private Product buildProduct(Long itemId, Long categoryId, String categoryCode, String brand, BigDecimal price) {
+        String brandValue = emptyToNull(brand);
+        String categoryLabel = emptyToNull(categoryCode);
+        BigDecimal productPrice = normalizePrice(price);
+
+        if (brandValue == null && categoryLabel == null && productPrice == null) {
+            return null;
+        }
+
+        Product product = new Product();
+        product.setItemId(itemId);
+        product.setCategoryId(categoryId);
+        product.setCategoryName(categoryLabel);
+        product.setBrand(brandValue);
+        product.setPrice(productPrice);
+        product.setName(buildProductDisplayName(itemId, brandValue));
+        return product;
+    }
+
+    private void syncProductMetadata(ProductMapper productMapper,
+            Map<Long, ProductSnapshot> syncedProducts,
+            Product product) {
+        if (product == null) {
+            return;
+        }
+
+        ProductSnapshot current = syncedProducts.get(product.getItemId());
+        ProductSnapshot incoming = ProductSnapshot.from(product);
+        if (current != null && !current.shouldUpdate(incoming)) {
+            return;
+        }
+
+        productMapper.upsertMetadata(product);
+        syncedProducts.put(product.getItemId(), current == null ? incoming : current.merge(incoming));
+    }
+
+    private UserBehavior buildBaseBehavior(Long userId, Long itemId, Long categoryId, String behaviorType, long timestamp) {
+        UserBehavior behavior = new UserBehavior();
+        behavior.setUserId(userId);
+        behavior.setItemId(itemId);
+        behavior.setCategoryId(categoryId);
+        behavior.setBehaviorType(behaviorType);
+        behavior.setBehaviorTime(timestamp);
+        behavior.setBehaviorDateTime(LocalDateTime.ofInstant(Instant.ofEpochSecond(timestamp), SYSTEM_ZONE));
+        behavior.setEventId(generateMd5(userId + "_" + itemId + "_" + behaviorType + "_" + timestamp));
+        behavior.setUnitPrice(BigDecimal.ZERO);
+        behavior.setQty(1);
+        return behavior;
+    }
+
+    DatasetFormat detectFormat(String line) {
+        String normalized = line == null ? "" : line.trim().toLowerCase();
+        if (normalized.startsWith("event_time,event_type,product_id")) {
+            return DatasetFormat.ARCHIVE;
+        }
+        return DatasetFormat.LEGACY;
+    }
+
+    private boolean isHeaderLine(String line, DatasetFormat datasetFormat) {
+        String normalized = line == null ? "" : line.trim().toLowerCase();
+        return datasetFormat == DatasetFormat.ARCHIVE
+                ? normalized.startsWith("event_time,event_type,product_id")
+                : normalized.startsWith("user_id,item_id,category_id");
+    }
+
+    private String normalizeBehaviorType(String rawType) {
+        String normalized = rawType == null ? "" : rawType.trim().toLowerCase();
+        switch (normalized) {
+            case "pv":
+            case "view":
+                return "pv";
+            case "buy":
+            case "purchase":
+                return "buy";
+            case "cart":
+                return "cart";
+            case "fav":
+            case "favorite":
+                return "fav";
+            default:
+                return null;
+        }
+    }
+
+    private String buildProductDisplayName(Long itemId, String brand) {
+        return brand == null ? "商品#" + itemId : brand + " #" + itemId;
+    }
+
+    private BigDecimal parseDecimal(String[] parts, int index) {
+        if (parts.length <= index || parts[index].trim().isEmpty()) {
+            return BigDecimal.ZERO;
+        }
+        try {
+            return new BigDecimal(parts[index].trim());
+        } catch (NumberFormatException e) {
+            return BigDecimal.ZERO;
+        }
+    }
+
+    private Integer parseInteger(String[] parts, int index, int defaultValue) {
+        if (parts.length <= index || parts[index].trim().isEmpty()) {
+            return defaultValue;
+        }
+        try {
+            return Integer.parseInt(parts[index].trim());
+        } catch (NumberFormatException e) {
+            return defaultValue;
+        }
+    }
+
+    private BigDecimal normalizePrice(BigDecimal price) {
+        if (price == null || price.compareTo(BigDecimal.ZERO) <= 0) {
+            return null;
+        }
+        return price;
+    }
+
+    private String emptyToNull(String value) {
+        if (value == null) {
+            return null;
+        }
+        String trimmed = value.trim();
+        return trimmed.isEmpty() ? null : trimmed;
+    }
+
     private String generateMd5(String input) {
         try {
             java.security.MessageDigest md = java.security.MessageDigest.getInstance("MD5");
@@ -204,7 +349,57 @@ public class DataImportServiceImpl implements DataImportService {
             }
             return sb.toString();
         } catch (Exception e) {
-            return input.hashCode() + "";
+            return String.valueOf(input.hashCode());
+        }
+    }
+
+    enum DatasetFormat {
+        ARCHIVE,
+        LEGACY
+    }
+
+    static class ParsedRow {
+        final UserBehavior behavior;
+        final Product product;
+
+        ParsedRow(UserBehavior behavior, Product product) {
+            this.behavior = behavior;
+            this.product = product;
+        }
+    }
+
+    static class ProductSnapshot {
+        private final String brand;
+        private final String categoryName;
+        private final BigDecimal price;
+
+        ProductSnapshot(String brand, String categoryName, BigDecimal price) {
+            this.brand = brand;
+            this.categoryName = categoryName;
+            this.price = price;
+        }
+
+        static ProductSnapshot from(Product product) {
+            return new ProductSnapshot(product.getBrand(), product.getCategoryName(), product.getPrice());
+        }
+
+        boolean shouldUpdate(ProductSnapshot incoming) {
+            return (isBlank(brand) && !isBlank(incoming.brand))
+                    || (isBlank(categoryName) && !isBlank(incoming.categoryName))
+                    || ((price == null || price.compareTo(BigDecimal.ZERO) <= 0)
+                            && incoming.price != null
+                            && incoming.price.compareTo(BigDecimal.ZERO) > 0);
+        }
+
+        ProductSnapshot merge(ProductSnapshot incoming) {
+            return new ProductSnapshot(
+                    isBlank(brand) ? incoming.brand : brand,
+                    isBlank(categoryName) ? incoming.categoryName : categoryName,
+                    (price == null || price.compareTo(BigDecimal.ZERO) <= 0) ? incoming.price : price);
+        }
+
+        private boolean isBlank(String value) {
+            return value == null || value.trim().isEmpty();
         }
     }
 }
