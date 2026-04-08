@@ -2,24 +2,24 @@
   <div class="data-manage">
     <div class="page-header">
       <h2 class="page-title">数据管理</h2>
-      <p class="page-desc">数据采集、导入与预处理中心</p>
+      <p class="page-desc">archive 主数据导入、补充采样与预处理中心</p>
     </div>
 
     <el-row :gutter="24">
-      <!-- 数据爬取 -->
+      <!-- 补充采样 -->
       <el-col :xs="24" :md="8">
         <div class="card">
-          <div class="card-title">数据爬取</div>
+          <div class="card-title">补充采样</div>
           <div class="crawler-ui">
-            <p class="desc">使用 Python 爬虫从外部电商平台抓取实时用户行为数据，增加数据源多样性。</p>
+            <p class="desc">Python 爬虫仅用于补充采样或演示，不作为当前正式分析口径的数据主源。</p>
             <div class="crawler-actions">
               <el-button type="warning" @click="handleCrawl" :loading="crawling" plain>
-                <el-icon><Search /></el-icon> 开始爬取数据
+                <el-icon><Search /></el-icon> 开始采集补充样本
               </el-button>
             </div>
             <div v-if="crawlResult" class="crawl-info">
               <el-alert
-                title="爬取成功"
+                title="补充样本采集成功"
                 :description="`数据地址: ${crawlResult.outputFile}`"
                 type="success"
                 show-icon
@@ -39,7 +39,7 @@
           <div class="card-title">数据导入</div>
           <el-form :model="importForm" label-width="80px" label-position="left">
             <el-form-item label="文件路径">
-              <el-input v-model="importForm.filePath" placeholder="CSV文件绝对路径（支持 archive/2019-Oct.csv）" />
+              <el-input v-model="importForm.filePath" placeholder="正式 archive CSV 路径（如 archive/2019-Oct.csv）" />
             </el-form-item>
             <el-form-item label="批量大小">
               <el-input-number v-model="importForm.batchSize" :min="1000" :max="10000" :step="1000" style="width: 100%" />
@@ -212,7 +212,7 @@ let progressTimer = null
 
 const handleCrawl = async () => {
   crawling.value = true
-  addLog('开始爬取数据 (调用 Python 爬虫)...', 'warning')
+  addLog('开始采集补充样本 (调用 Python 爬虫)...', 'warning')
   
   try {
     const res = await crawlData()
@@ -220,8 +220,8 @@ const handleCrawl = async () => {
     const logMatch = res.data.log?.match(/共[获取]?\s*(\d+)\s*条/)
     const count = logMatch ? logMatch[1] : '部分'
     
-    addLog(`✨ 数据爬取成功！获取了 ${count} 条实时交易行为数据。`, 'success')
-    ElMessage.success(`成功采集 ${count} 条数据`)
+    addLog(`✨ 补充样本采集成功！获取了 ${count} 条记录。`, 'success')
+    ElMessage.success(`成功采集 ${count} 条补充样本`)
   } catch (error) {
     addLog('采集失败: ' + (error.response?.data?.message || error.message), 'danger')
   } finally {
@@ -232,7 +232,7 @@ const handleCrawl = async () => {
 const useCrawledPath = () => {
   if (crawlResult.value) {
     importForm.filePath = crawlResult.value.outputFile
-    ElMessage.success('已自动填写爬取的文件路径')
+    ElMessage.success('已自动填写补充样本路径')
   }
 }
 

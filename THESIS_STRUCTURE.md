@@ -132,7 +132,7 @@ Abstract
 ### 附录B 核心代码
 - RFMServiceImpl.java（核心片段）
 - UserBehaviorMapper.java（SQL示例）
-- ecommerce_crawler.py（爬虫逻辑）
+- ecommerce_crawler.py（补充采样脚本，非正式主数据源）
 
 ---
 

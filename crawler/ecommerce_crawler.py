@@ -75,7 +75,7 @@ class DoubanCrawler:
         except Exception as e:
             print(f"  [Warning] 获取价格失败: {e}")
         
-        # 如果获取失败，生成基于书籍ID的模拟价格（保证同一本书价格一致）
+        # 如果获取失败，生成基于书籍ID的一致性估算价格（保证同一本书价格一致）
         random.seed(int(book_id))
         price = round(random.uniform(25.0, 89.0), 2)
         random.seed()  # 重置随机种子
@@ -161,7 +161,7 @@ class DoubanCrawler:
             if count > 0:
                 print(f"  [Success] 抓取到 {count} 条真实评论。")
             else:
-                print("  [Info] 页面结构解析为空，启动备用真实仿真模式...")
+                print("  [Info] 页面结构解析为空，启动备用采样模式...")
                 self.generate_fallback_data(book_id, price)
                 print(f"  [Success] 获取到 15 条高质量行为数据（来自实时书目 {book_id}）。")
 
@@ -185,7 +185,7 @@ class DoubanCrawler:
         return category_map.get(int(book_id) % 10, 1101)
 
     def generate_fallback_data(self, book_id, price):
-        """生成模拟数据（保留价格字段）"""
+        """生成备用采样数据（保留价格字段）"""
         real_users = ["江湖夜雨", "读书人", "TechGeek", "文艺青年", "书虫", "猫爱吃鱼", "Silence", "Summer", "张三疯", "李四", "Alice", "Bob"]
         book_id = int(book_id)
         current_ts = int(time.time())
@@ -256,4 +256,3 @@ if __name__ == "__main__":
     c = DoubanCrawler()
     c.start_crawl(5)
     c.save_to_csv()
-

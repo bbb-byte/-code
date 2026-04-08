@@ -72,12 +72,16 @@ public class DataImportServiceImpl implements DataImportService {
                 return;
             }
 
-            DatasetFormat datasetFormat = detectFormat(line);
-            if (isHeaderLine(line, datasetFormat)) {
+            if (!isSupportedArchiveLine(line)) {
+                log.error("不支持的数据格式，仅支持 archive 电商行为数据集: {}", filePath);
+                return;
+            }
+
+            if (isHeaderLine(line)) {
                 line = reader.readLine();
             }
 
-            log.info("开始导入数据文件: {}，识别格式: {}", filePath, datasetFormat);
+            log.info("开始导入 archive 数据文件: {}", filePath);
 
             while (line != null && !stopFlag) {
                 if (!line.trim().isEmpty()) {
@@ -86,7 +90,7 @@ public class DataImportServiceImpl implements DataImportService {
                     }
 
                     try {
-                        ParsedRow parsedRow = parseCsvLine(line, datasetFormat);
+                        ParsedRow parsedRow = parseCsvLine(line);
                         if (parsedRow != null && parsedRow.behavior != null) {
                             behaviorMapper.insert(parsedRow.behavior);
                             importedCount++;
@@ -151,33 +155,8 @@ public class DataImportServiceImpl implements DataImportService {
         return null;
     }
 
-    ParsedRow parseCsvLine(String line, DatasetFormat datasetFormat) {
-        return datasetFormat == DatasetFormat.ARCHIVE ? parseArchiveCsvLine(line) : parseLegacyCsvLine(line);
-    }
-
-    ParsedRow parseLegacyCsvLine(String line) {
-        String[] parts = line.split(",", -1);
-        if (parts.length < 5) {
-            return null;
-        }
-
-        try {
-            Long userId = Long.parseLong(parts[0].trim());
-            Long itemId = Long.parseLong(parts[1].trim());
-            Long categoryId = Long.parseLong(parts[2].trim());
-            String behaviorType = normalizeBehaviorType(parts[3].trim());
-            long timestamp = Long.parseLong(parts[4].trim());
-            if (behaviorType == null) {
-                return null;
-            }
-
-            UserBehavior behavior = buildBaseBehavior(userId, itemId, categoryId, behaviorType, timestamp);
-            behavior.setUnitPrice(parseDecimal(parts, 5));
-            behavior.setQty(parseInteger(parts, 6, 1));
-            return new ParsedRow(behavior, null);
-        } catch (NumberFormatException e) {
-            return null;
-        }
+    ParsedRow parseCsvLine(String line) {
+        return parseArchiveCsvLine(line);
     }
 
     ParsedRow parseArchiveCsvLine(String line) {
@@ -266,17 +245,27 @@ public class DataImportServiceImpl implements DataImportService {
 
     DatasetFormat detectFormat(String line) {
         String normalized = line == null ? "" : line.trim().toLowerCase();
-        if (normalized.startsWith("event_time,event_type,product_id")) {
+        if (normalized.startsWith("event_time,event_type,product_id") || isArchiveDataLine(normalized)) {
             return DatasetFormat.ARCHIVE;
         }
-        return DatasetFormat.LEGACY;
+        throw new IllegalArgumentException("unsupported_dataset_format");
     }
 
-    private boolean isHeaderLine(String line, DatasetFormat datasetFormat) {
+    private boolean isHeaderLine(String line) {
         String normalized = line == null ? "" : line.trim().toLowerCase();
-        return datasetFormat == DatasetFormat.ARCHIVE
-                ? normalized.startsWith("event_time,event_type,product_id")
-                : normalized.startsWith("user_id,item_id,category_id");
+        return normalized.startsWith("event_time,event_type,product_id");
+    }
+
+    private boolean isSupportedArchiveLine(String line) {
+        String normalized = line == null ? "" : line.trim().toLowerCase();
+        return normalized.startsWith("event_time,event_type,product_id") || isArchiveDataLine(normalized);
+    }
+
+    private boolean isArchiveDataLine(String normalized) {
+        String[] parts = normalized.split(",", -1);
+        return parts.length >= 9
+                && parts[0].matches("\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2} utc")
+                && normalizeBehaviorType(parts[1]) != null;
     }
 
     private String normalizeBehaviorType(String rawType) {
@@ -313,17 +302,6 @@ public class DataImportServiceImpl implements DataImportService {
         }
     }
 
-    private Integer parseInteger(String[] parts, int index, int defaultValue) {
-        if (parts.length <= index || parts[index].trim().isEmpty()) {
-            return defaultValue;
-        }
-        try {
-            return Integer.parseInt(parts[index].trim());
-        } catch (NumberFormatException e) {
-            return defaultValue;
-        }
-    }
-
     private BigDecimal normalizePrice(BigDecimal price) {
         if (price == null || price.compareTo(BigDecimal.ZERO) <= 0) {
             return null;
@@ -354,8 +332,7 @@ public class DataImportServiceImpl implements DataImportService {
     }
 
     enum DatasetFormat {
-        ARCHIVE,
-        LEGACY
+        ARCHIVE
     }
 
     static class ParsedRow {

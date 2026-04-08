@@ -35,7 +35,7 @@ INSERT INTO sys_user (username, password, email, role, real_name) VALUES
 ('admin', '$2a$10$n8yMUVw2Lrj3Cq.vFUs7ieMYB4dFXSSv.cHx0TYmEyKpJz14q2ErC', 'admin@example.com', 'admin', '系统管理员');
 
 -- ----------------------------------------
--- 2. 用户行为记录表 (存储淘宝数据集)
+-- 2. 用户行为记录表 (存储 archive 多品类电商行为数据集的正式行为字段)
 -- ----------------------------------------
 DROP TABLE IF EXISTS user_behavior;
 CREATE TABLE user_behavior (
@@ -44,20 +44,16 @@ CREATE TABLE user_behavior (
     user_id BIGINT NOT NULL COMMENT '用户ID',
     item_id BIGINT NOT NULL COMMENT '商品ID',
     category_id BIGINT NOT NULL COMMENT '商品类目ID',
-    category_code VARCHAR(255) COMMENT '商品类目编码(如electronics.smartphone)',
-    brand VARCHAR(100) COMMENT '商品品牌',
     behavior_type VARCHAR(10) NOT NULL COMMENT '行为类型: pv/buy/cart/fav',
     behavior_time BIGINT NOT NULL COMMENT '行为时间戳(Unix)',
     behavior_date_time DATETIME COMMENT '行为日期时间',
-    unit_price DECIMAL(10,2) DEFAULT 0.00 COMMENT '商品单价(来自数据集或爬虫)',
+    unit_price DECIMAL(10,2) DEFAULT 0.00 COMMENT '商品单价(来自 archive 正式数据集)',
     qty INT DEFAULT 1 COMMENT '购买数量(默认1)',
-    user_session VARCHAR(64) COMMENT '用户会话ID',
     create_time DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     UNIQUE KEY uk_event_id (event_id),
     INDEX idx_user_id (user_id),
     INDEX idx_item_id (item_id),
     INDEX idx_category_id (category_id),
-    INDEX idx_brand (brand),
     INDEX idx_behavior_type (behavior_type),
     INDEX idx_behavior_time (behavior_time),
     INDEX idx_behavior_date_time (behavior_date_time),

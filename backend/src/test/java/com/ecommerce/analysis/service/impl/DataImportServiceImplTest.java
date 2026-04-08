@@ -22,20 +22,17 @@ class DataImportServiceImplTest {
     }
 
     @Test
-    void shouldParseLegacyRow() {
-        DataImportServiceImpl.ParsedRow parsed = service.parseLegacyCsvLine(
-                "831122896845,4820710,1101,buy,1281965426,28.0,2");
+    void shouldDetectArchiveFormatFromDataLine() {
+        DataImportServiceImpl.DatasetFormat format = service.detectFormat(
+                "2019-10-01 00:00:00 UTC,view,44600062,2103807459595387724,,shiseido,35.79,541312140,session-1");
 
-        assertNotNull(parsed);
-        assertNotNull(parsed.behavior);
-        assertNull(parsed.product);
+        assertEquals(DataImportServiceImpl.DatasetFormat.ARCHIVE, format);
+    }
 
-        UserBehavior behavior = parsed.behavior;
-        assertEquals(Long.valueOf(831122896845L), behavior.getUserId());
-        assertEquals(Long.valueOf(4820710L), behavior.getItemId());
-        assertEquals("buy", behavior.getBehaviorType());
-        assertEquals(new BigDecimal("28.0"), behavior.getUnitPrice());
-        assertEquals(Integer.valueOf(2), behavior.getQty());
+    @Test
+    void shouldRejectLegacyDatasetFormat() {
+        assertThrows(IllegalArgumentException.class, () -> service.detectFormat(
+                "831122896845,4820710,1101,buy,1281965426,28.0,2"));
     }
 
     @Test

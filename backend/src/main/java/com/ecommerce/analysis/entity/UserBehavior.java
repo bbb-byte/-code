@@ -7,7 +7,7 @@ import java.time.LocalDateTime;
 
 /**
  * 用户行为记录实体类
- * 对应淘宝用户行为数据集
+ * 对应 archive 多品类电商行为数据集中的正式行为字段
  */
 @Data
 @TableName("user_behavior")
@@ -52,7 +52,7 @@ public class UserBehavior {
     private LocalDateTime behaviorDateTime;
 
     /**
-     * 商品单价 (仅buy行为有值，来自爬虫获取)
+     * 商品单价 (来自 archive 正式数据集)
      */
     private BigDecimal unitPrice;
 
