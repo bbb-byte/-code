@@ -1,0 +1,42 @@
+# OS & Editors
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Java / Maven (Backend)
+backend/target/
+backend/*.log
+backend/help.md
+*.class
+*.jar
+*.war
+*.ear
+
+# Node / Vue (Frontend)
+frontend/node_modules/
+frontend/dist/
+frontend/npm-debug.log*
+frontend/yarn-debug.log*
+frontend/yarn-error.log*
+frontend/.env.local
+frontend/.env.*.local
+
+# Python (Crawler)
+crawler/__pycache__/
+*.py[cod]
+*$py.class
+crawler/.venv/
+.venv/
+venv/
+ENV/
+
+# Data Files (Large or Generated)
+UserBehavior.csv.zip
+crawled_user_behavior.csv
+*.log
+
+# Docker (if needed)
+# docker-compose.override.yml

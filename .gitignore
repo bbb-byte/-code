@@ -1,0 +1,75 @@
+# ===========================
+# 大型数据集（超过 GitHub 100MB 限制，请从 Kaggle 下载）
+# https://www.kaggle.com/datasets/mkechinov/ecommerce-behavior-data-from-multi-category-store
+# ===========================
+UserBehavior.csv
+UserBehavior.csv.zip
+
+# ===========================
+# macOS
+# ===========================
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# ===========================
+# Java / Maven (backend)
+# ===========================
+backend/target/
+*.class
+*.jar
+*.war
+*.ear
+*.nar
+hs_err_pid*
+
+# ===========================
+# Vue / Node (frontend)
+# ===========================
+frontend/node_modules/
+frontend/dist/
+frontend/.env.local
+frontend/.env.*.local
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# ===========================
+# Python
+# ===========================
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+env/
+*.egg-info/
+.pytest_cache/
+
+# ===========================
+# IDE / Editor
+# ===========================
+.idea/
+.vscode/
+*.iml
+*.iws
+*.ipr
+.classpath
+.project
+.settings/
+
+# ===========================
+# 日志 / 临时文件
+# ===========================
+*.log
+*.tmp
+*.bak
+*.swp
+
+# ===========================
+# 环境变量 / 敏感配置
+# ===========================
+.env
+.env.local
+application-local.yml
+application-local.properties
