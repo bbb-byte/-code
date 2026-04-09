@@ -30,9 +30,17 @@ class DataImportServiceImplTest {
     }
 
     @Test
-    void shouldRejectLegacyDatasetFormat() {
+    void shouldDetectCrawledFormatFromDataLine() {
+        DataImportServiceImpl.DatasetFormat format = service.detectFormat(
+                "831122896845,4820710,1101,buy,1281965426,28.0,1");
+
+        assertEquals(DataImportServiceImpl.DatasetFormat.CRAWLED, format);
+    }
+
+    @Test
+    void shouldRejectUnsupportedDatasetFormat() {
         assertThrows(IllegalArgumentException.class, () -> service.detectFormat(
-                "831122896845,4820710,1101,buy,1281965426,28.0,2"));
+                "foo,bar,baz"));
     }
 
     @Test
@@ -63,5 +71,41 @@ class DataImportServiceImplTest {
                 "2019-10-01 00:00:00 UTC,remove_from_cart,44600062,2103807459595387724,,shiseido,35.79,541312140,session-1");
 
         assertNull(parsed);
+    }
+
+    @Test
+    void shouldParseCrawledRowWithImportTimePreprocessing() {
+        DataImportServiceImpl.ParsedRow parsed = service.parseCrawledCsvLine(
+                "831122896845,4820710,1101, purchase ,1281965426,28.0,0");
+
+        assertNotNull(parsed);
+        assertNotNull(parsed.behavior);
+        assertNotNull(parsed.product);
+
+        UserBehavior behavior = parsed.behavior;
+        Product product = parsed.product;
+
+        assertEquals(Long.valueOf(831122896845L), behavior.getUserId());
+        assertEquals("buy", behavior.getBehaviorType());
+        assertEquals(new BigDecimal("28.0"), behavior.getUnitPrice());
+        assertEquals(1, behavior.getQty());
+        assertEquals(LocalDateTime.of(2010, 8, 16, 21, 30, 26), behavior.getBehaviorDateTime());
+
+        assertEquals(Long.valueOf(4820710L), product.getItemId());
+        assertEquals(Long.valueOf(1101L), product.getCategoryId());
+        assertEquals("商品#4820710", product.getName());
+        assertEquals(new BigDecimal("28.0"), product.getPrice());
+    }
+
+    @Test
+    void shouldDefaultMissingCrawledValuesDuringPreprocessing() {
+        DataImportServiceImpl.ParsedRow parsed = service.parseCrawledCsvLine(
+                ",4820710,1101,pv,1281961826,,");
+
+        assertNotNull(parsed);
+        assertNotNull(parsed.behavior);
+        assertEquals(Long.valueOf(0L), parsed.behavior.getUserId());
+        assertEquals(BigDecimal.ZERO, parsed.behavior.getUnitPrice());
+        assertEquals(1, parsed.behavior.getQty());
     }
 }

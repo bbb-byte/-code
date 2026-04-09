@@ -19,6 +19,7 @@ import java.math.RoundingMode;
 import java.time.LocalDateTime;
 import java.time.temporal.ChronoUnit;
 import java.util.*;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Collectors;
 
 /**
@@ -28,15 +29,28 @@ import java.util.stream.Collectors;
 @Service
 public class RFMServiceImpl implements RFMService {
 
+    private static final String ANALYSIS_BUSY_MESSAGE = "已有画像分析任务正在执行，请稍后重试";
+
     @Autowired
     private UserBehaviorMapper userBehaviorMapper;
 
     @Autowired
     private UserProfileMapper userProfileMapper;
 
+    private final AtomicBoolean analysisRunning = new AtomicBoolean(false);
+
     @Override
     @Transactional
     public void calculateAllUserRFM() {
+        beginAnalysisTask("calculate-rfm");
+        try {
+            doCalculateAllUserRFM();
+        } finally {
+            finishAnalysisTask("calculate-rfm");
+        }
+    }
+
+    private void doCalculateAllUserRFM() {
         log.info("开始计算所有用户的RFM值...");
 
         // 获取用户行为汇总数据
@@ -177,17 +191,7 @@ public class RFMServiceImpl implements RFMService {
         allProfiles.addAll(nonBuyerProfiles);
 
         for (UserProfile profile : allProfiles) {
-            // 检查是否已存在
-            LambdaQueryWrapper<UserProfile> wrapper = new LambdaQueryWrapper<>();
-            wrapper.eq(UserProfile::getUserId, profile.getUserId());
-            UserProfile existing = userProfileMapper.selectOne(wrapper);
-
-            if (existing != null) {
-                profile.setId(existing.getId());
-                userProfileMapper.updateById(profile);
-            } else {
-                userProfileMapper.insert(profile);
-            }
+            userProfileMapper.upsertProfile(profile);
         }
 
         log.info("RFM计算完成，共处理 {} 个用户（购买用户: {}, 未转化: {}）",
@@ -223,6 +227,15 @@ public class RFMServiceImpl implements RFMService {
     @Override
     @Transactional
     public void performKMeansClustering(int k) {
+        beginAnalysisTask("kmeans-clustering");
+        try {
+            doPerformKMeansClustering(k);
+        } finally {
+            finishAnalysisTask("kmeans-clustering");
+        }
+    }
+
+    private void doPerformKMeansClustering(int k) {
         log.info("开始执行K-Means聚类，K={}", k);
 
         // 获取所有用户画像
@@ -296,6 +309,18 @@ public class RFMServiceImpl implements RFMService {
         }
 
         log.info("K-Means聚类完成，共生成 {} 个簇", clusters.size());
+    }
+
+    private void beginAnalysisTask(String taskName) {
+        if (!analysisRunning.compareAndSet(false, true)) {
+            throw new IllegalStateException(ANALYSIS_BUSY_MESSAGE);
+        }
+        log.info("开始执行画像分析任务: {}", taskName);
+    }
+
+    private void finishAnalysisTask(String taskName) {
+        analysisRunning.set(false);
+        log.info("画像分析任务结束: {}", taskName);
     }
 
     @Override

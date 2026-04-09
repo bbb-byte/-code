@@ -22,7 +22,9 @@ import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -62,8 +64,10 @@ public class DataImportServiceImpl implements DataImportService {
             UserBehaviorMapper behaviorMapper = sqlSession.getMapper(UserBehaviorMapper.class);
             ProductMapper productMapper = sqlSession.getMapper(ProductMapper.class);
             Map<Long, ProductSnapshot> syncedProducts = new HashMap<>();
+            Set<String> seenEventIds = new HashSet<>();
 
             long importedCount = 0;
+            long duplicateCount = 0;
             long startTime = System.currentTimeMillis();
             String line = readFirstDataLine(reader);
 
@@ -72,16 +76,19 @@ public class DataImportServiceImpl implements DataImportService {
                 return;
             }
 
-            if (!isSupportedArchiveLine(line)) {
-                log.error("不支持的数据格式，仅支持 archive 电商行为数据集: {}", filePath);
+            DatasetFormat format;
+            try {
+                format = detectFormat(line);
+            } catch (IllegalArgumentException e) {
+                log.error("不支持的数据格式，仅支持 archive 主数据和 crawler 7 列补充样本: {}", filePath);
                 return;
             }
 
-            if (isHeaderLine(line)) {
+            if (isHeaderLine(line, format)) {
                 line = reader.readLine();
             }
 
-            log.info("开始导入 archive 数据文件: {}", filePath);
+            log.info("开始导入 {} 数据文件: {}", format.getDisplayName(), filePath);
 
             while (line != null && !stopFlag) {
                 if (!line.trim().isEmpty()) {
@@ -90,8 +97,14 @@ public class DataImportServiceImpl implements DataImportService {
                     }
 
                     try {
-                        ParsedRow parsedRow = parseCsvLine(line);
+                        ParsedRow parsedRow = parseCsvLine(line, format);
                         if (parsedRow != null && parsedRow.behavior != null) {
+                            if (!seenEventIds.add(parsedRow.behavior.getEventId())) {
+                                duplicateCount++;
+                                line = reader.readLine();
+                                continue;
+                            }
+
                             behaviorMapper.insert(parsedRow.behavior);
                             importedCount++;
                             processedRows.set(importedCount);
@@ -118,7 +131,10 @@ public class DataImportServiceImpl implements DataImportService {
             sqlSession.commit();
 
             long duration = System.currentTimeMillis() - startTime;
-            log.info("数据导入完成，共导入 {} 条记录，耗时 {} 秒", importedCount, duration / 1000);
+            log.info("数据导入完成，共导入 {} 条记录，导入前去重 {} 条，耗时 {} 秒",
+                    importedCount,
+                    duplicateCount,
+                    duration / 1000);
         } catch (Exception e) {
             log.error("数据导入失败: {}", e.getMessage(), e);
         } finally {
@@ -155,7 +171,10 @@ public class DataImportServiceImpl implements DataImportService {
         return null;
     }
 
-    ParsedRow parseCsvLine(String line) {
+    ParsedRow parseCsvLine(String line, DatasetFormat format) {
+        if (format == DatasetFormat.CRAWLED) {
+            return parseCrawledCsvLine(line);
+        }
         return parseArchiveCsvLine(line);
     }
 
@@ -193,6 +212,39 @@ public class DataImportServiceImpl implements DataImportService {
         }
     }
 
+    ParsedRow parseCrawledCsvLine(String line) {
+        String[] parts = line.split(",", -1);
+        if (parts.length < 7) {
+            return null;
+        }
+
+        try {
+            Long userId = parseLongOrDefault(parts[0], 0L);
+            Long itemId = parseLongOrDefault(parts[1], 0L);
+            Long categoryId = parseLongOrDefault(parts[2], 0L);
+            String behaviorType = normalizeBehaviorType(parts[3].trim());
+            if (behaviorType == null) {
+                return null;
+            }
+
+            long timestamp = parseLongOrDefault(parts[4], 0L);
+            LocalDateTime eventTime = LocalDateTime.ofInstant(Instant.ofEpochSecond(timestamp), SYSTEM_ZONE);
+            BigDecimal unitPrice = parseDecimal(parts, 5);
+            int qty = parseIntegerOrDefault(parts, 6, 1);
+
+            UserBehavior behavior = buildBaseBehavior(userId, itemId, categoryId, behaviorType, timestamp);
+            behavior.setBehaviorDateTime(eventTime);
+            behavior.setUnitPrice(unitPrice);
+            behavior.setQty(qty);
+            behavior.setEventId(generateMd5(userId + "_" + itemId + "_" + behaviorType + "_" + timestamp));
+
+            Product product = buildFallbackProduct(itemId, categoryId, unitPrice);
+            return new ParsedRow(behavior, product);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
     private Product buildProduct(Long itemId, Long categoryId, String categoryCode, String brand, BigDecimal price) {
         String brandValue = emptyToNull(brand);
         String categoryLabel = emptyToNull(categoryCode);
@@ -209,6 +261,15 @@ public class DataImportServiceImpl implements DataImportService {
         product.setBrand(brandValue);
         product.setPrice(productPrice);
         product.setName(buildProductDisplayName(itemId, brandValue));
+        return product;
+    }
+
+    private Product buildFallbackProduct(Long itemId, Long categoryId, BigDecimal price) {
+        Product product = new Product();
+        product.setItemId(itemId);
+        product.setCategoryId(categoryId);
+        product.setPrice(normalizePrice(price));
+        product.setName(buildProductDisplayName(itemId, null));
         return product;
     }
 
@@ -248,17 +309,19 @@ public class DataImportServiceImpl implements DataImportService {
         if (normalized.startsWith("event_time,event_type,product_id") || isArchiveDataLine(normalized)) {
             return DatasetFormat.ARCHIVE;
         }
+        if (normalized.startsWith("user_id,item_id,category_id,behavior_type,timestamp")
+                || isCrawledDataLine(normalized)) {
+            return DatasetFormat.CRAWLED;
+        }
         throw new IllegalArgumentException("unsupported_dataset_format");
     }
 
-    private boolean isHeaderLine(String line) {
+    private boolean isHeaderLine(String line, DatasetFormat format) {
         String normalized = line == null ? "" : line.trim().toLowerCase();
+        if (format == DatasetFormat.CRAWLED) {
+            return normalized.startsWith("user_id,item_id,category_id,behavior_type,timestamp");
+        }
         return normalized.startsWith("event_time,event_type,product_id");
-    }
-
-    private boolean isSupportedArchiveLine(String line) {
-        String normalized = line == null ? "" : line.trim().toLowerCase();
-        return normalized.startsWith("event_time,event_type,product_id") || isArchiveDataLine(normalized);
     }
 
     private boolean isArchiveDataLine(String normalized) {
@@ -266,6 +329,16 @@ public class DataImportServiceImpl implements DataImportService {
         return parts.length >= 9
                 && parts[0].matches("\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2} utc")
                 && normalizeBehaviorType(parts[1]) != null;
+    }
+
+    private boolean isCrawledDataLine(String normalized) {
+        String[] parts = normalized.split(",", -1);
+        return parts.length >= 7
+                && isLongLike(parts[0])
+                && isLongLike(parts[1])
+                && isLongLike(parts[2])
+                && normalizeBehaviorType(parts[3]) != null
+                && isLongLike(parts[4]);
     }
 
     private String normalizeBehaviorType(String rawType) {
@@ -309,6 +382,33 @@ public class DataImportServiceImpl implements DataImportService {
         return price;
     }
 
+    private Long parseLongOrDefault(String rawValue, Long defaultValue) {
+        if (rawValue == null || rawValue.trim().isEmpty()) {
+            return defaultValue;
+        }
+        try {
+            return Long.parseLong(rawValue.trim());
+        } catch (NumberFormatException e) {
+            return defaultValue;
+        }
+    }
+
+    private int parseIntegerOrDefault(String[] parts, int index, int defaultValue) {
+        if (parts.length <= index || parts[index].trim().isEmpty()) {
+            return defaultValue;
+        }
+        try {
+            int value = Integer.parseInt(parts[index].trim());
+            return value > 0 ? value : defaultValue;
+        } catch (NumberFormatException e) {
+            return defaultValue;
+        }
+    }
+
+    private boolean isLongLike(String value) {
+        return value != null && value.trim().matches("-?\\d+");
+    }
+
     private String emptyToNull(String value) {
         if (value == null) {
             return null;
@@ -332,7 +432,18 @@ public class DataImportServiceImpl implements DataImportService {
     }
 
     enum DatasetFormat {
-        ARCHIVE
+        ARCHIVE("archive"),
+        CRAWLED("crawler");
+
+        private final String displayName;
+
+        DatasetFormat(String displayName) {
+            this.displayName = displayName;
+        }
+
+        String getDisplayName() {
+            return displayName;
+        }
     }
 
     static class ParsedRow {

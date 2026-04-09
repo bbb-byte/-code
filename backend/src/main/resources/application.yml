@@ -16,6 +16,9 @@ spring:
     url: jdbc:mysql://localhost:3306/ecommerce_analysis?useUnicode=true&characterEncoding=utf-8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true&rewriteBatchedStatements=true
     username: root
     password: root123
+    hikari:
+      # 将会话级 InnoDB 锁等待超时提高到 300 秒，减少大批量分析时的误超时
+      connection-init-sql: SET SESSION innodb_lock_wait_timeout = 300
   
   # Redis配置
   data:
@@ -50,7 +53,7 @@ mybatis-plus:
       logic-not-delete-value: 0
   configuration:
     map-underscore-to-camel-case: true
-    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
+    log-impl: org.apache.ibatis.logging.nologging.NoLoggingImpl
 
 # JWT配置
 jwt:
@@ -61,7 +64,8 @@ jwt:
 logging:
   level:
     root: INFO
-    com.ecommerce.analysis: DEBUG
-    com.baomidou.mybatisplus: DEBUG
+    com.ecommerce.analysis: INFO
+    com.baomidou.mybatisplus: WARN
+    org.apache.ibatis: WARN
   pattern:
     console: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"

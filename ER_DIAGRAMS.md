@@ -6,7 +6,13 @@
 
 ## 一、系统整体 ER 图
 
-```mermaid
+下图为推荐展示版，避免 Mermaid 自动布局时关系文字被实体框遮挡。
+
+![系统整体 ER 图](./database-er.png)
+
+系统整体 ER 图 Mermaid 源码：
+
+```text
 erDiagram
     sys_user ||--o{ sys_log : "产生日志"
     user_behavior }o--|| user_profile : "聚合生成"

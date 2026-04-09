@@ -2,6 +2,7 @@ package com.ecommerce.analysis.mapper;
 
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import com.ecommerce.analysis.entity.UserProfile;
+import org.apache.ibatis.annotations.Insert;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
@@ -14,6 +15,34 @@ import java.util.Map;
  */
 @Mapper
 public interface UserProfileMapper extends BaseMapper<UserProfile> {
+
+    /**
+     * 插入或更新用户画像，避免逐条 select + insert/update 拉长事务。
+     */
+    @Insert("INSERT INTO user_profile " +
+            "(user_id, recency, frequency, monetary, r_score, f_score, m_score, rfm_score, user_group, cluster_id, " +
+            " total_views, total_carts, total_favs, total_buys, conversion_rate, last_active_time, create_time, update_time) " +
+            "VALUES " +
+            "(#{userId}, #{recency}, #{frequency}, #{monetary}, #{rScore}, #{fScore}, #{mScore}, #{rfmScore}, #{userGroup}, #{clusterId}, " +
+            " #{totalViews}, #{totalCarts}, #{totalFavs}, #{totalBuys}, #{conversionRate}, #{lastActiveTime}, NOW(), NOW()) " +
+            "ON DUPLICATE KEY UPDATE " +
+            "recency = VALUES(recency), " +
+            "frequency = VALUES(frequency), " +
+            "monetary = VALUES(monetary), " +
+            "r_score = VALUES(r_score), " +
+            "f_score = VALUES(f_score), " +
+            "m_score = VALUES(m_score), " +
+            "rfm_score = VALUES(rfm_score), " +
+            "user_group = VALUES(user_group), " +
+            "cluster_id = VALUES(cluster_id), " +
+            "total_views = VALUES(total_views), " +
+            "total_carts = VALUES(total_carts), " +
+            "total_favs = VALUES(total_favs), " +
+            "total_buys = VALUES(total_buys), " +
+            "conversion_rate = VALUES(conversion_rate), " +
+            "last_active_time = VALUES(last_active_time), " +
+            "update_time = NOW()")
+    int upsertProfile(UserProfile profile);
 
     /**
      * 获取用户分群统计
