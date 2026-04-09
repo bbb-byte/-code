@@ -5,6 +5,7 @@ import com.ecommerce.analysis.entity.ProductPublicMetric;
 import org.apache.ibatis.annotations.Insert;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
+import org.apache.ibatis.annotations.Delete;
 import org.apache.ibatis.annotations.Select;
 
 import java.util.List;
@@ -56,4 +57,7 @@ public interface ProductPublicMetricMapper extends BaseMapper<ProductPublicMetri
             "LIMIT #{limit}")
     List<Map<String, Object>> getHotProductsWithPublicMetrics(@Param("limit") int limit,
             @Param("sourcePlatform") String sourcePlatform);
+
+    @Delete("DELETE FROM product_public_metric WHERE item_id = #{itemId} AND source_platform = #{sourcePlatform}")
+    int deleteByItemAndPlatform(@Param("itemId") Long itemId, @Param("sourcePlatform") String sourcePlatform);
 }

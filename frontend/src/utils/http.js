@@ -6,7 +6,7 @@ import { getToken, handleAuthExpired } from '@/utils/auth'
 // 创建axios实例
 const http = axios.create({
     baseURL: '/api',
-    timeout: 60000,
+    timeout: 600000,
     headers: {
         'Content-Type': 'application/json'
     }

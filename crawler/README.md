@@ -30,3 +30,31 @@ python3 crawler/ecommerce_crawler.py \
 - 必须先人工维护 `item_id -> source_product_id/source_url` 的映射文件。
 - v1 只允许 `jd`，不支持多平台混用。
 - `mapping_confidence` 支持人工标签（`manual/reviewed/high`）或 `0-1` 数值。
+
+## 后端接口示例
+
+抓取已映射商品的公网满意度指标：
+
+```bash
+curl -X POST 'http://localhost:8080/api/data/crawl?mappingPath=crawler/mappings/product_public_mapping.jd.sample.csv&outputDir=crawler/output&fixtureDir=crawler/fixtures' \
+  -H 'Authorization: Bearer <token>'
+```
+
+如果你已经有商品快照 CSV，直接做候选召回：
+
+```bash
+curl -X POST 'http://localhost:8080/api/data/public-mapping/recall?productPath=crawler/mappings/internal_products.sample.csv&outputPath=crawler/output/recalled_candidates.csv&fixtureDir=crawler/fixtures&topK=5' \
+  -H 'Authorization: Bearer <token>'
+```
+
+如果你只有 Kaggle/archive 原始行为文件，让后端先自动生成商品快照再继续召回：
+
+```bash
+curl -X POST 'http://localhost:8080/api/data/public-mapping/recall?sourceDataPath=archive/2019-Oct.csv&generatedProductPath=crawler/output/internal_products.auto.csv&productPath=crawler/mappings/internal_products.sample.csv&outputPath=crawler/output/recalled_candidates.csv&fixtureDir=crawler/fixtures&topK=5' \
+  -H 'Authorization: Bearer <token>'
+```
+
+说明：
+- 传了 `sourceDataPath` 时，后端会先执行 `build_internal_products_snapshot.py`
+- 不传 `sourceDataPath` 时，后端直接使用 `productPath`
+- `productPath` 现在既可以是 sample 文件，也可以是你自己生成的商品快照文件

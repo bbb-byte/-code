@@ -23,8 +23,59 @@ export function analyzeData(clusterK = 5) {
 }
 
 // 执行数据爬取
-export function crawlData() {
-    return http.post('/data/crawl')
+export function crawlData(mappingPath, outputDir, fixtureDir) {
+    return http.post('/data/crawl', null, {
+        params: { mappingPath, outputDir, fixtureDir }
+    })
+}
+
+// 召回公网映射候选商品
+export function recallPublicMappingCandidates(productPath, outputPath, fixtureDir, sourceDataPath = '', generatedProductPath = '', topK = 5) {
+    return http.post('/data/public-mapping/recall', null, {
+        params: { productPath, outputPath, fixtureDir, sourceDataPath, generatedProductPath, topK }
+    })
+}
+
+// 计算公网映射候选分数
+export function scorePublicMappingCandidates(productPath, candidatePath, outputPath) {
+    return http.post('/data/public-mapping/score', null, {
+        params: { productPath, candidatePath, outputPath }
+    })
+}
+
+// 预览公网映射评分结果
+export function previewPublicMappingScores(scorePath) {
+    return http.get('/data/public-mapping/score-preview', {
+        params: { scorePath }
+    })
+}
+
+// 确认公网映射并入库
+export function confirmPublicMappings(rows) {
+    return http.post('/data/public-mapping/confirm', {
+        rows
+    })
+}
+
+// 获取最近确认的公网映射
+export function getLatestPublicMappings(sourcePlatform = 'jd', limit = 10) {
+    return http.get('/data/public-mapping/latest', {
+        params: { sourcePlatform, limit }
+    })
+}
+
+// 撤销公网映射
+export function removePublicMapping(id) {
+    return http.post('/data/public-mapping/remove', null, {
+        params: { id }
+    })
+}
+
+// 获取公网任务进度
+export function getPublicTaskProgress(taskId) {
+    return http.get('/data/public-task/progress', {
+        params: { taskId }
+    })
 }
 
 // 获取最新行为记录

@@ -8,6 +8,33 @@
 - 本流程只为 `product_public_mapping` 生成候选映射，不自动生成用户行为。
 - 当前仓库内部商品名很多是占位名，如 `brand #item_id` 或 `商品#item_id`，不能把 `product.name` 当成强检索键。
 
+## Kaggle / archive 原始文件怎么用
+
+工作台的“商品快照”输入本质上需要这 4 类字段：
+
+- `item_id`，或兼容别名 `product_id/goods_id`
+- `brand`
+- `category_name`，或兼容别名 `category_code`
+- `price`，或兼容别名 `unit_price/amount`
+
+如果 Kaggle 原始 CSV 本身就包含这些列，技术上可以直接把原始文件路径填到“商品快照”里。
+
+但更推荐先把事件级原始文件整理成商品级快照，再送入召回/评分流程。原因是原始行为日志里同一个商品会重复很多行，直接使用虽然能跑，但商品品牌、类目、价格可能取到覆盖后的脏值。
+
+推荐脚本：
+
+```bash
+python3 crawler/build_internal_products_snapshot.py \
+  --input archive/2019-Oct.csv \
+  --output crawler/output/internal_products.from-archive.csv
+```
+
+然后在工作台里把“商品快照”路径改成：
+
+```text
+crawler/output/internal_products.from-archive.csv
+```
+
 ## 推荐流程
 
 1. 从内部商品快照提取候选检索条件：
@@ -22,6 +49,23 @@
    - `0.75 - 0.89`：中置信度，必须人工复核
    - `< 0.75`：拒绝，不入映射表
 5. 复核通过后写入 `product_public_mapping`。
+
+可配合脚本：
+
+```bash
+python3 crawler/mapping_candidate_recall.py \
+  --products crawler/mappings/internal_products.sample.csv \
+  --fixture-dir crawler/fixtures \
+  --output crawler/output/recalled_candidates.csv \
+  --top-k 5
+
+python3 crawler/mapping_scorer.py \
+  --products crawler/mappings/internal_products.sample.csv \
+  --candidates crawler/output/recalled_candidates.csv \
+  --output crawler/output/recalled_candidate_scores.csv
+```
+
+第一步先召回公网候选商品，第二步再打分并给出复核建议。
 
 ## 打分字段
 

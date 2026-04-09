@@ -1,10 +1,15 @@
 package com.ecommerce.analysis.controller;
 
 import com.ecommerce.analysis.common.Result;
+import com.ecommerce.analysis.dto.PublicMappingConfirmRequest;
+import com.ecommerce.analysis.entity.ProductPublicMapping;
 import com.ecommerce.analysis.service.DataImportService;
 import com.ecommerce.analysis.service.ProductPublicMetricService;
+import com.ecommerce.analysis.service.PublicTaskService;
 import com.ecommerce.analysis.service.RFMService;
 import com.ecommerce.analysis.vo.ImportStatusVO;
+import com.ecommerce.analysis.vo.PublicMappingScoreRowVO;
+import com.ecommerce.analysis.vo.PublicTaskStatusVO;
 import io.swagger.annotations.Api;
 import io.swagger.annotations.ApiOperation;
 import lombok.extern.slf4j.Slf4j;
@@ -15,6 +20,8 @@ import org.springframework.web.bind.annotation.*;
 import com.ecommerce.analysis.entity.UserBehavior;
 import com.ecommerce.analysis.service.UserBehaviorService;
 import java.io.File;
+import java.sql.SQLSyntaxErrorException;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -40,6 +47,9 @@ public class DataController {
 
     @Autowired
     private ProductPublicMetricService productPublicMetricService;
+
+    @Autowired
+    private PublicTaskService publicTaskService;
 
     @ApiOperation("导入CSV数据")
     @PostMapping("/import")
@@ -83,78 +93,117 @@ public class DataController {
 
     @ApiOperation("执行数据爬取")
     @PostMapping("/crawl")
-    public Result<Map<String, Object>> crawlData() {
+    public Result<Map<String, Object>> crawlData(
+            @RequestParam(defaultValue = "crawler/mappings/product_public_mapping.jd.sample.csv") String mappingPath,
+            @RequestParam(defaultValue = "crawler/output") String outputDir,
+            @RequestParam(defaultValue = "crawler/fixtures") String fixtureDir) {
+        String taskId = publicTaskService.startCrawlTask(mappingPath, outputDir, fixtureDir);
+        Map<String, Object> result = new HashMap<>();
+        result.put("taskId", taskId);
+        result.put("status", "running");
+        return Result.success("公网满意度采集任务已启动", result);
+    }
+
+    @ApiOperation("召回公网映射候选商品")
+    @PostMapping("/public-mapping/recall")
+    public Result<Map<String, Object>> recallPublicMappingCandidates(
+            @RequestParam(defaultValue = "crawler/mappings/internal_products.sample.csv") String productPath,
+            @RequestParam(defaultValue = "crawler/output/recalled_candidates.csv") String outputPath,
+            @RequestParam(defaultValue = "crawler/fixtures") String fixtureDir,
+            @RequestParam(defaultValue = "") String sourceDataPath,
+            @RequestParam(defaultValue = "crawler/output/internal_products.auto.csv") String generatedProductPath,
+            @RequestParam(defaultValue = "5") int topK) {
+        String taskId = publicTaskService.startRecallTask(productPath, outputPath, fixtureDir, sourceDataPath, generatedProductPath, topK);
+        Map<String, Object> result = new HashMap<>();
+        result.put("taskId", taskId);
+        result.put("status", "running");
+        return Result.success("公网映射候选召回任务已启动", result);
+    }
+
+    @ApiOperation("计算公网映射候选分数")
+    @PostMapping("/public-mapping/score")
+    public Result<Map<String, Object>> scorePublicMappingCandidates(
+            @RequestParam(defaultValue = "crawler/mappings/internal_products.sample.csv") String productPath,
+            @RequestParam(defaultValue = "crawler/output/recalled_candidates.csv") String candidatePath,
+            @RequestParam(defaultValue = "crawler/output/recalled_candidate_scores.csv") String outputPath) {
+        String taskId = publicTaskService.startScoreTask(productPath, candidatePath, outputPath);
+        Map<String, Object> result = new HashMap<>();
+        result.put("taskId", taskId);
+        result.put("status", "running");
+        return Result.success("公网映射评分任务已启动", result);
+    }
+
+    @ApiOperation("获取公网任务进度")
+    @GetMapping("/public-task/progress")
+    public Result<PublicTaskStatusVO> getPublicTaskProgress(@RequestParam String taskId) {
+        return Result.success(publicTaskService.getTaskStatus(taskId));
+    }
+
+    @ApiOperation("预览公网映射评分结果")
+    @GetMapping("/public-mapping/score-preview")
+    public Result<List<PublicMappingScoreRowVO>> previewPublicMappingScore(
+            @RequestParam(defaultValue = "crawler/output/recalled_candidate_scores.csv") String scorePath) {
         try {
-            String workDir = System.getProperty("user.dir");
-            if (workDir.endsWith("backend")) {
-                workDir = workDir.substring(0, workDir.length() - 8);
-            }
-
-            String crawlerPath = workDir + "/crawler/ecommerce_crawler.py";
-            String mappingPath = workDir + "/crawler/mappings/product_public_mapping.jd.sample.csv";
-            String outputDir = workDir + "/crawler/output";
-            String outputJsonFile = outputDir + "/jd_product_public_metrics.json";
-            String outputFile = outputDir + "/jd_product_public_metrics.csv";
-            File crawlerFile = new File(crawlerPath);
-            if (!crawlerFile.exists()) {
-                return Result.error("爬虫脚本不存在: " + crawlerPath);
-            }
-
-            // 构造命令，尝试 python3 或 python
-            String pythonCmd = "python3";
-            try {
-                new ProcessBuilder(pythonCmd, "--version").start().waitFor();
-            } catch (Exception e) {
-                pythonCmd = "python";
-            }
-
-            ProcessBuilder pb = new ProcessBuilder(
-                    pythonCmd,
-                    crawlerPath,
-                    "--mapping", mappingPath,
-                    "--output-dir", outputDir,
-                    "--fixture-dir", workDir + "/crawler/fixtures",
-                    "--sleep-seconds", "0");
-            pb.directory(new File(workDir));
-            pb.redirectErrorStream(true); // 合并错误流
-
-            Process process = pb.start();
-
-            // 读取输出防止阻塞
-            StringBuilder output = new StringBuilder();
-            try (java.io.BufferedReader reader = new java.io.BufferedReader(
-                    new java.io.InputStreamReader(process.getInputStream()))) {
-                String line;
-                while ((line = reader.readLine()) != null) {
-                    output.append(line).append("\n");
-                }
-            }
-
-            boolean finished = process.waitFor(30, java.util.concurrent.TimeUnit.SECONDS);
-            int exitCode = finished ? process.exitValue() : -1;
-
-            Map<String, Object> result = new HashMap<>();
-            result.put("status", exitCode == 0 ? "完成" : (finished ? "失败" : "超时"));
-            result.put("outputFile", outputFile);
-            result.put("outputJsonFile", outputJsonFile);
-            result.put("mappingFile", mappingPath);
-            result.put("sourceFamily", "jd-public-comment-summary");
-            result.put("targetPlatform", "jd");
-            result.put("log", output.toString());
-
-            if (exitCode != 0) {
-                return Result.error("爬虫执行失败: " + output.toString());
-            }
-
-            int importedMappings = productPublicMetricService.importMappingsFromCsv(mappingPath);
-            int importedRows = productPublicMetricService.importLatestMetricsFromCsv(outputFile);
-            result.put("importedMappings", importedMappings);
-            result.put("importedRows", importedRows);
-
-            return Result.success("公网满意度采集成功", result);
+            return Result.success(productPublicMetricService.previewScoreRows(resolveWorkspacePath(scorePath)));
         } catch (Exception e) {
-            log.error("执行爬虫异常", e);
-            return Result.error("执行爬虫异常: " + e.getMessage());
+            log.error("读取映射评分预览异常", e);
+            return Result.error("读取映射评分预览异常: " + e.getMessage());
+        }
+    }
+
+    @ApiOperation("确认公网映射并入库")
+    @PostMapping("/public-mapping/confirm")
+    public Result<Map<String, Object>> confirmPublicMappings(@RequestBody PublicMappingConfirmRequest request) {
+        try {
+            int confirmedRows = productPublicMetricService.confirmMappings(request.getRows());
+            Map<String, Object> result = new HashMap<>();
+            result.put("confirmedRows", confirmedRows);
+            result.put("requestedRows", request.getRows() == null ? 0 : request.getRows().size());
+            return Result.success("公网映射确认入库完成", result);
+        } catch (Exception e) {
+            if (isPublicMetricSchemaMissing(e)) {
+                return Result.error("公网映射表不存在，请先执行 backend/src/main/resources/sql/upgrade_archive_dataset.sql 或重新初始化数据库");
+            }
+            log.error("确认公网映射异常", e);
+            return Result.error("确认公网映射异常: " + e.getMessage());
+        }
+    }
+
+    @ApiOperation("获取最近确认的公网映射")
+    @GetMapping("/public-mapping/latest")
+    public Result<List<ProductPublicMapping>> getLatestPublicMappings(
+            @RequestParam(defaultValue = "jd") String sourcePlatform,
+            @RequestParam(defaultValue = "10") int limit) {
+        try {
+            return Result.success(productPublicMetricService.listLatestMappings(sourcePlatform, limit));
+        } catch (Exception e) {
+            if (isPublicMetricSchemaMissing(e)) {
+                log.warn("公网映射表不存在，降级返回空列表: {}", e.getMessage());
+                return Result.success("公网映射表不存在，请先执行 backend/src/main/resources/sql/upgrade_archive_dataset.sql", Collections.emptyList());
+            }
+            log.error("获取最近公网映射异常", e);
+            return Result.error("获取最近公网映射异常: " + e.getMessage());
+        }
+    }
+
+    @ApiOperation("撤销公网映射")
+    @PostMapping("/public-mapping/remove")
+    public Result<Map<String, Object>> removePublicMapping(@RequestParam Long id) {
+        try {
+            boolean removed = productPublicMetricService.removeMapping(id);
+            if (!removed) {
+                return Result.error("未找到可撤销的公网映射");
+            }
+            Map<String, Object> result = new HashMap<>();
+            result.put("removed", true);
+            result.put("id", id);
+            return Result.success("公网映射已撤销", result);
+        } catch (Exception e) {
+            if (isPublicMetricSchemaMissing(e)) {
+                return Result.error("公网映射表不存在，请先执行 backend/src/main/resources/sql/upgrade_archive_dataset.sql 或重新初始化数据库");
+            }
+            log.error("撤销公网映射异常", e);
+            return Result.error("撤销公网映射异常: " + e.getMessage());
         }
     }
 
@@ -180,4 +229,45 @@ public class DataController {
             return Result.error("数据分析失败: " + e.getMessage());
         }
     }
+
+    private String resolveWorkDir() {
+        String workDir = System.getProperty("user.dir");
+        if (workDir.endsWith("backend")) {
+            workDir = workDir.substring(0, workDir.length() - 8);
+        }
+        return workDir;
+    }
+
+    private String resolveWorkspacePath(String path) {
+        if (path == null || path.trim().isEmpty()) {
+            return path;
+        }
+        File file = new File(path);
+        if (file.isAbsolute()) {
+            return file.getAbsolutePath();
+        }
+        return new File(resolveWorkDir(), path).getAbsolutePath();
+    }
+
+    private boolean isPublicMetricSchemaMissing(Throwable throwable) {
+        Throwable current = throwable;
+        while (current != null) {
+            String message = current.getMessage();
+            if (message != null) {
+                String normalized = message.toLowerCase();
+                if ((normalized.contains("product_public_mapping") || normalized.contains("product_public_metric"))
+                        && (normalized.contains("doesn't exist")
+                        || normalized.contains("does not exist")
+                        || normalized.contains("unknown table"))) {
+                    return true;
+                }
+            }
+            if (current instanceof SQLSyntaxErrorException) {
+                return true;
+            }
+            current = current.getCause();
+        }
+        return false;
+    }
+
 }

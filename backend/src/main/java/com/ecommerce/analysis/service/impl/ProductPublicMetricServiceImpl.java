@@ -5,6 +5,7 @@ import com.ecommerce.analysis.entity.ProductPublicMetric;
 import com.ecommerce.analysis.mapper.ProductPublicMappingMapper;
 import com.ecommerce.analysis.mapper.ProductPublicMetricMapper;
 import com.ecommerce.analysis.service.ProductPublicMetricService;
+import com.ecommerce.analysis.vo.PublicMappingScoreRowVO;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
@@ -15,7 +16,9 @@ import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.time.format.DateTimeParseException;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 
@@ -89,6 +92,74 @@ public class ProductPublicMetricServiceImpl implements ProductPublicMetricServic
         return importedRows;
     }
 
+    @Override
+    public List<PublicMappingScoreRowVO> previewScoreRows(String filePath) throws IOException {
+        List<PublicMappingScoreRowVO> rows = new ArrayList<>();
+        try (BufferedReader reader = new BufferedReader(new FileReader(filePath))) {
+            String headerLine = reader.readLine();
+            if (headerLine == null || headerLine.trim().isEmpty()) {
+                return rows;
+            }
+
+            Map<String, Integer> headerIndex = parseHeader(headerLine);
+            String line;
+            while ((line = reader.readLine()) != null) {
+                if (line.trim().isEmpty()) {
+                    continue;
+                }
+
+                PublicMappingScoreRowVO row = parseScoreRow(line, headerIndex);
+                if (row != null) {
+                    rows.add(row);
+                }
+            }
+        }
+        return rows;
+    }
+
+    @Override
+    public int confirmMappings(List<PublicMappingScoreRowVO> rows) {
+        int confirmedRows = 0;
+        if (rows == null) {
+            return 0;
+        }
+        for (PublicMappingScoreRowVO row : rows) {
+            ProductPublicMapping mapping = toConfirmedMapping(row);
+            if (mapping == null) {
+                continue;
+            }
+            productPublicMappingMapper.upsert(mapping);
+            confirmedRows++;
+        }
+        return confirmedRows;
+    }
+
+    @Override
+    public List<ProductPublicMapping> listLatestMappings(String sourcePlatform, int limit) {
+        String normalizedPlatform = normalizePlatform(sourcePlatform);
+        if (normalizedPlatform == null) {
+            normalizedPlatform = SUPPORTED_PLATFORM;
+        }
+        int normalizedLimit = limit <= 0 ? 10 : Math.min(limit, 100);
+        return productPublicMappingMapper.selectLatestByPlatform(normalizedPlatform, normalizedLimit);
+    }
+
+    @Override
+    public boolean removeMapping(Long id) {
+        if (id == null) {
+            return false;
+        }
+        ProductPublicMapping mapping = productPublicMappingMapper.selectById(id);
+        if (mapping == null) {
+            return false;
+        }
+        String sourcePlatform = normalizePlatform(mapping.getSourcePlatform());
+        if (sourcePlatform != null && mapping.getItemId() != null) {
+            productPublicMetricMapper.deleteByItemAndPlatform(mapping.getItemId(), sourcePlatform);
+        }
+        return productPublicMappingMapper.deleteById(id) > 0;
+    }
+
     private Map<String, Integer> parseHeader(String headerLine) {
         Map<String, Integer> headerIndex = new HashMap<>();
         String[] parts = parseCsvLine(headerLine);
@@ -146,6 +217,102 @@ public class ProductPublicMetricServiceImpl implements ProductPublicMetricServic
         metric.setRawPayload(trimToNull(valueOf(parts, headerIndex, "raw_payload")));
         metric.setCrawledAt(parseDateTime(valueOf(parts, headerIndex, "crawled_at")));
         return metric;
+    }
+
+    private PublicMappingScoreRowVO parseScoreRow(String line, Map<String, Integer> headerIndex) {
+        String[] parts = parseCsvLine(line);
+        Long itemId = parseLong(valueOf(parts, headerIndex, "item_id"));
+        String sourcePlatform = normalizePlatform(valueOf(parts, headerIndex, "source_platform"));
+        String sourceProductId = trimToNull(valueOf(parts, headerIndex, "source_product_id"));
+        String sourceUrl = trimToNull(valueOf(parts, headerIndex, "source_url"));
+        if (itemId == null || sourcePlatform == null || sourceProductId == null || sourceUrl == null) {
+            return null;
+        }
+
+        PublicMappingScoreRowVO row = new PublicMappingScoreRowVO();
+        row.setItemId(itemId);
+        row.setBrand(trimToNull(valueOf(parts, headerIndex, "brand")));
+        row.setCategoryName(trimToNull(valueOf(parts, headerIndex, "category_name")));
+        row.setInternalPrice(parseDecimal(valueOf(parts, headerIndex, "internal_price")));
+        row.setSourcePlatform(sourcePlatform);
+        row.setSourceProductId(sourceProductId);
+        row.setSourceUrl(sourceUrl);
+        row.setPublicTitle(trimToNull(valueOf(parts, headerIndex, "public_title")));
+        row.setPublicBrand(trimToNull(valueOf(parts, headerIndex, "public_brand")));
+        row.setPublicCategory(trimToNull(valueOf(parts, headerIndex, "public_category")));
+        row.setPublicPrice(parseDecimal(valueOf(parts, headerIndex, "public_price")));
+        row.setBrandScore(parseDecimal(valueOf(parts, headerIndex, "brand_score")));
+        row.setCategoryScore(parseDecimal(valueOf(parts, headerIndex, "category_score")));
+        row.setPriceScore(parseDecimal(valueOf(parts, headerIndex, "price_score")));
+        row.setTitleScore(parseDecimal(valueOf(parts, headerIndex, "title_score")));
+        row.setEvidenceScore(parseDecimal(valueOf(parts, headerIndex, "evidence_score")));
+        row.setTotalScore(parseDecimal(valueOf(parts, headerIndex, "total_score")));
+        row.setRecommendedAction(trimToNull(valueOf(parts, headerIndex, "recommended_action")));
+        row.setScoreReason(trimToNull(valueOf(parts, headerIndex, "score_reason")));
+        row.setVerifiedTitle(trimToNull(row.getPublicTitle()));
+        row.setMappingConfidence(row.getTotalScore() == null ? new BigDecimal("0.50") : row.getTotalScore());
+        row.setVerificationNote(buildVerificationNote(row));
+        row.setEvidenceNote(buildEvidenceNote(row));
+        return row;
+    }
+
+    private ProductPublicMapping toConfirmedMapping(PublicMappingScoreRowVO row) {
+        if (row == null || row.getItemId() == null) {
+            return null;
+        }
+        String sourcePlatform = normalizePlatform(row.getSourcePlatform());
+        String sourceProductId = trimToNull(row.getSourceProductId());
+        String sourceUrl = trimToNull(row.getSourceUrl());
+        if (sourcePlatform == null || sourceProductId == null || sourceUrl == null) {
+            return null;
+        }
+
+        ProductPublicMapping mapping = new ProductPublicMapping();
+        mapping.setItemId(row.getItemId());
+        mapping.setSourcePlatform(sourcePlatform);
+        mapping.setSourceProductId(sourceProductId);
+        mapping.setSourceUrl(sourceUrl);
+        mapping.setVerifiedTitle(defaultIfBlank(row.getVerifiedTitle(), row.getPublicTitle()));
+        mapping.setMappingConfidence(row.getMappingConfidence() == null ? (row.getTotalScore() == null ? new BigDecimal("0.50") : row.getTotalScore()) : row.getMappingConfidence());
+        mapping.setVerificationNote(defaultIfBlank(row.getVerificationNote(), buildVerificationNote(row)));
+        mapping.setEvidenceNote(defaultIfBlank(row.getEvidenceNote(), buildEvidenceNote(row)));
+        mapping.setVerifiedAt(LocalDateTime.now());
+        return mapping;
+    }
+
+    private String buildVerificationNote(PublicMappingScoreRowVO row) {
+        String scoreText = row.getTotalScore() == null ? "unknown" : row.getTotalScore().stripTrailingZeros().toPlainString();
+        String reason = defaultIfBlank(row.getScoreReason(), "manual_confirm");
+        return abbreviate("页面工作台确认入库; score=" + scoreText + "; reason=" + reason, 255);
+    }
+
+    private String buildEvidenceNote(PublicMappingScoreRowVO row) {
+        StringBuilder builder = new StringBuilder();
+        if (trimToNull(row.getPublicTitle()) != null) {
+            builder.append("title=").append(row.getPublicTitle());
+        }
+        if (trimToNull(row.getPublicBrand()) != null) {
+            appendWithSeparator(builder, "brand=" + row.getPublicBrand());
+        }
+        if (trimToNull(row.getPublicCategory()) != null) {
+            appendWithSeparator(builder, "category=" + row.getPublicCategory());
+        }
+        return abbreviate(builder.toString(), 255);
+    }
+
+    private void appendWithSeparator(StringBuilder builder, String value) {
+        if (builder.length() > 0) {
+            builder.append("; ");
+        }
+        builder.append(value);
+    }
+
+    private String abbreviate(String value, int maxLength) {
+        String trimmed = trimToNull(value);
+        if (trimmed == null || trimmed.length() <= maxLength) {
+            return trimmed;
+        }
+        return trimmed.substring(0, Math.max(0, maxLength - 3)) + "...";
     }
 
     private String valueOf(String[] parts, Map<String, Integer> headerIndex, String key) {
