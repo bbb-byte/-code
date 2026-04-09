@@ -38,6 +38,11 @@ public interface UserBehaviorService extends IService<UserBehavior> {
     List<Map<String, Object>> getHotProductsByBuy(int limit);
 
     /**
+     * 获取热门商品及京东公开评价补充指标。
+     */
+    List<Map<String, Object>> getHotProductsWithPublicMetrics(int limit);
+
+    /**
      * 获取热门类目
      */
     List<Map<String, Object>> getHotCategories(int limit);

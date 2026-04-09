@@ -28,6 +28,11 @@ export function getHotProductsByBuy(limit = 10) {
     return http.get('/analysis/hot-products/buy', { params: { limit } })
 }
 
+// 获取热门商品及京东公开评价补充指标
+export function getHotProductsWithPublicMetrics(limit = 10) {
+    return http.get('/analysis/hot-products/public-metrics', { params: { limit } })
+}
+
 // 获取热门类目
 export function getHotCategories(limit = 10) {
     return http.get('/analysis/hot-categories', { params: { limit } })

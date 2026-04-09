@@ -2,6 +2,7 @@ package com.ecommerce.analysis.service.impl;
 
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.ecommerce.analysis.entity.UserBehavior;
+import com.ecommerce.analysis.mapper.ProductPublicMetricMapper;
 import com.ecommerce.analysis.mapper.UserBehaviorMapper;
 import com.ecommerce.analysis.mapper.UserProfileMapper;
 import com.ecommerce.analysis.service.UserBehaviorService;
@@ -21,11 +22,16 @@ import java.util.Objects;
 public class UserBehaviorServiceImpl extends ServiceImpl<UserBehaviorMapper, UserBehavior>
         implements UserBehaviorService {
 
+    private static final String JD_PLATFORM = "jd";
+
     @Autowired
     private UserBehaviorMapper userBehaviorMapper;
 
     @Autowired
     private UserProfileMapper userProfileMapper;
+
+    @Autowired
+    private ProductPublicMetricMapper productPublicMetricMapper;
 
     @Override
     public DashboardVO getDashboardData() {
@@ -115,6 +121,11 @@ public class UserBehaviorServiceImpl extends ServiceImpl<UserBehaviorMapper, Use
     @Override
     public List<Map<String, Object>> getHotProductsByBuy(int limit) {
         return userBehaviorMapper.getHotProductsByBuy(limit);
+    }
+
+    @Override
+    public List<Map<String, Object>> getHotProductsWithPublicMetrics(int limit) {
+        return productPublicMetricMapper.getHotProductsWithPublicMetrics(limit, JD_PLATFORM);
     }
 
     @Override

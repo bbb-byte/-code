@@ -1,6 +1,4 @@
 requests
-beautifulsoup4
-fake_useragent
 pandas
 numpy
 scikit-learn

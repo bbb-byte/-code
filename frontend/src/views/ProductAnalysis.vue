@@ -2,7 +2,7 @@
   <div class="product-analysis">
     <div class="page-header">
       <h2 class="page-title">商品分析</h2>
-      <p class="page-desc">主要商品及类目表现分析</p>
+      <p class="page-desc">主要商品及类目表现分析，并补充展示京东公开评价摘要作为商品口碑解释指标</p>
     </div>
 
     <el-row :gutter="24">
@@ -40,12 +40,55 @@
         </div>
       </el-col>
     </el-row>
+
+    <el-row :gutter="24">
+      <el-col :span="24">
+        <div class="card metric-card">
+          <div class="card-title">热销商品公网满意度补充指标（京东公开评价摘要）</div>
+          <el-table :data="metricRows" stripe empty-text="当前暂无已映射的公网满意度数据">
+            <el-table-column prop="productLabel" label="商品" min-width="180" />
+            <el-table-column prop="buy_count" label="购买次数" width="110" />
+            <el-table-column label="好评率" width="120">
+              <template #default="{ row }">
+                <span v-if="row.positive_rate !== null">{{ formatPositiveRate(row.positive_rate) }}</span>
+                <el-tag v-else type="info" size="small">未抓取</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column prop="review_count" label="评论总数" width="120">
+              <template #default="{ row }">
+                <span v-if="row.review_count !== null">{{ row.review_count }}</span>
+                <el-tag v-else type="info" size="small">未抓取</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column prop="shop_score" label="店铺评分" width="120">
+              <template #default="{ row }">
+                <span v-if="row.shop_score !== null">{{ Number(row.shop_score).toFixed(2) }}</span>
+                <el-tag v-else type="info" size="small">未抓取</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="状态" width="120">
+              <template #default="{ row }">
+                <el-tag :type="row.crawl_status === 'success' ? 'success' : 'info'" size="small">
+                  {{ row.crawl_status === 'success' ? '已抓取' : '待补充' }}
+                </el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="说明" min-width="220">
+              <template #default="{ row }">
+                <span v-if="row.source_url">该指标来自京东公开商品评价摘要，用于补充解释商品口碑，不代表平台内部点击日志。</span>
+                <span v-else>当前商品尚未建立公网映射，暂不展示补充指标。</span>
+              </template>
+            </el-table-column>
+          </el-table>
+        </div>
+      </el-col>
+    </el-row>
   </div>
 </template>
 
 <script setup>
 import { ref, onMounted, onUnmounted } from 'vue'
-import { getHotProductsByBuy, getHotProductsByView, getHotCategories } from '@/api/analysis'
+import { getHotProductsByBuy, getHotProductsWithPublicMetrics, getHotProductsByView, getHotCategories } from '@/api/analysis'
 import * as echarts from 'echarts'
 
 const buyChartRef = ref(null)
@@ -57,15 +100,25 @@ let buyChart = null
 let viewChart = null
 let categoryChart = null
 let compareChart = null
+const metricRows = ref([])
 
 const loadData = async () => {
   try {
-    const [buyRes, viewRes, categoryRes] = await Promise.all([
+    const [buyRes, metricRes, viewRes, categoryRes] = await Promise.all([
       getHotProductsByBuy(10),
+      getHotProductsWithPublicMetrics(10),
       getHotProductsByView(10),
       getHotCategories(10)
     ])
     initCharts(buyRes.data, viewRes.data, categoryRes.data)
+    metricRows.value = (metricRes.data || []).map(item => ({
+      ...item,
+      productLabel: productLabel(item),
+      positive_rate: item.positive_rate ?? null,
+      review_count: item.review_count ?? null,
+      shop_score: item.shop_score ?? null,
+      crawl_status: item.crawl_status || 'pending'
+    }))
   } catch (error) {
     console.error('加载数据失败:', error)
   }
@@ -83,6 +136,13 @@ const productLabel = (item) => {
 const categoryLabel = (item) => {
   if (!item) return ''
   return item.category_name || `ID ${item.category_id}`
+}
+
+const formatPositiveRate = (value) => {
+  const numeric = Number(value)
+  if (!Number.isFinite(numeric)) return '-'
+  const percent = numeric <= 1 ? numeric * 100 : numeric
+  return `${percent.toFixed(2)}%`
 }
 
 const initCharts = (buyData, viewData, categoryData) => {
@@ -306,5 +366,8 @@ onUnmounted(() => {
 <style scoped lang="scss">
 .product-analysis {
   .el-col { margin-bottom: 24px; }
+  .metric-card :deep(.el-table) {
+    margin-top: 8px;
+  }
 }
 </style>

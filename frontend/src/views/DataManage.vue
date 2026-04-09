@@ -2,32 +2,30 @@
   <div class="data-manage">
     <div class="page-header">
       <h2 class="page-title">数据管理</h2>
-      <p class="page-desc">archive 主数据、补充样本与指定文件导入中心</p>
+      <p class="page-desc">archive 主数据、商品公网满意度补充与指定文件导入中心</p>
     </div>
 
     <el-row :gutter="24">
-      <!-- 补充采样 -->
+      <!-- 公网满意度补充 -->
       <el-col :xs="24" :md="8">
         <div class="card">
-          <div class="card-title">补充采样</div>
+          <div class="card-title">公网满意度补充</div>
           <div class="crawler-ui">
-            <p class="desc">Python 爬虫仅用于补充采样或演示，不作为当前正式分析口径的数据主源。</p>
+            <p class="desc">Python 爬虫当前只补充商品侧公开满意度指标，例如好评率、评论总数和店铺评分。它不抓取真实点击日志，也不会进入正式 `user_behavior` 主数据链路。</p>
             <div class="crawler-actions">
               <el-button type="warning" @click="handleCrawl" :loading="crawling" plain>
-                <el-icon><Search /></el-icon> 开始采集补充样本
+                <el-icon><Search /></el-icon> 采集公网满意度指标
               </el-button>
             </div>
             <div v-if="crawlResult" class="crawl-info">
               <el-alert
-                title="补充样本采集成功"
-                :description="`数据地址: ${crawlResult.outputFile}`"
+                title="公网满意度采集完成"
+                :description="`来源: ${crawlResult.targetPlatform} | 指标文件: ${crawlResult.outputFile}`"
                 type="success"
                 show-icon
                 :closable="false"
               />
-              <el-button size="small" type="primary" link @click="useCrawledPath" class="mt-2">
-                自动填写导入路径
-              </el-button>
+              <p class="crawl-note mt-2">采集结果会自动尝试回写到商品公网满意度快照表，不会作为行为事件导入 `user_behavior`。</p>
             </div>
           </div>
         </div>
@@ -36,13 +34,13 @@
       <!-- 数据导入 -->
       <el-col :xs="24" :md="8">
         <div class="card">
-          <div class="card-title">数据导入</div>
+            <div class="card-title">数据导入</div>
           <el-form :model="importForm" label-width="80px" label-position="left">
             <el-form-item label="文件路径">
-              <el-input v-model="importForm.filePath" placeholder="支持 archive、crawler 7 列样本或带标准表头的指定文件" />
+              <el-input v-model="importForm.filePath" placeholder="支持 archive 主数据、legacy 7 列行为样本或带标准表头的行为文件" />
             </el-form-item>
             <div class="import-tips">
-              导入时会自动执行字段清洗、行为类型标准化、时间格式纠正以及价格/数量缺省容错。
+              这里只导入用户行为事件数据。公网满意度采集生成的指标文件会自动回写独立表，不需要再走这里的行为导入。
             </div>
             <el-form-item label="批量大小">
               <el-input-number v-model="importForm.batchSize" :min="1000" :max="10000" :step="1000" style="width: 100%" />
@@ -273,27 +271,20 @@ function createEmptyImportStatus() {
 
 const handleCrawl = async () => {
   crawling.value = true
-  addLog('开始采集补充样本 (调用 Python 爬虫)...', 'warning')
+  addLog('开始采集商品公网满意度指标 (调用 Python 爬虫)...', 'warning')
   
   try {
     const res = await crawlData()
     crawlResult.value = res.data
-    const logMatch = res.data.log?.match(/共[获取]?\s*(\d+)\s*条/)
+    const logMatch = res.data.log?.match(/(\d+)\s*条/)
     const count = logMatch ? logMatch[1] : '部分'
     
-    addLog(`✨ 补充样本采集成功！获取了 ${count} 条记录。`, 'success')
-    ElMessage.success(`成功采集 ${count} 条补充样本`)
+    addLog(`✨ 公网满意度采集完成！输出 ${count} 条商品指标，并已尝试回写数据库。`, 'success')
+    ElMessage.success(`成功采集 ${count} 条公网商品指标`)
   } catch (error) {
     addLog('采集失败: ' + (error.response?.data?.message || error.message), 'danger')
   } finally {
     crawling.value = false
-  }
-}
-
-const useCrawledPath = () => {
-  if (crawlResult.value) {
-    importForm.filePath = crawlResult.value.outputFile
-    ElMessage.success('已自动填写补充样本路径')
   }
 }
 
@@ -466,6 +457,12 @@ onUnmounted(() => {
       background: var(--bg-color-page);
       border-radius: 8px;
       padding: 12px;
+    }
+
+    .crawl-note {
+      font-size: 12px;
+      color: var(--text-secondary);
+      line-height: 1.6;
     }
   }
   

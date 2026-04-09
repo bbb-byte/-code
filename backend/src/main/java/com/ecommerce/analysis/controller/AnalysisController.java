@@ -61,6 +61,14 @@ public class AnalysisController {
         return Result.success(data);
     }
 
+    @ApiOperation("获取热门商品及京东公开评价补充指标")
+    @GetMapping("/hot-products/public-metrics")
+    public Result<List<Map<String, Object>>> getHotProductsWithPublicMetrics(
+            @RequestParam(defaultValue = "10") int limit) {
+        List<Map<String, Object>> data = userBehaviorService.getHotProductsWithPublicMetrics(limit);
+        return Result.success(data);
+    }
+
     @ApiOperation("获取热门类目")
     @GetMapping("/hot-categories")
     public Result<List<Map<String, Object>>> getHotCategories(

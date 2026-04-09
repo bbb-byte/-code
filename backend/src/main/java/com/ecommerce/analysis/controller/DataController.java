@@ -2,6 +2,7 @@ package com.ecommerce.analysis.controller;
 
 import com.ecommerce.analysis.common.Result;
 import com.ecommerce.analysis.service.DataImportService;
+import com.ecommerce.analysis.service.ProductPublicMetricService;
 import com.ecommerce.analysis.service.RFMService;
 import com.ecommerce.analysis.vo.ImportStatusVO;
 import io.swagger.annotations.Api;
@@ -36,6 +37,9 @@ public class DataController {
 
     @Autowired
     private UserBehaviorService userBehaviorService;
+
+    @Autowired
+    private ProductPublicMetricService productPublicMetricService;
 
     @ApiOperation("导入CSV数据")
     @PostMapping("/import")
@@ -87,6 +91,10 @@ public class DataController {
             }
 
             String crawlerPath = workDir + "/crawler/ecommerce_crawler.py";
+            String mappingPath = workDir + "/crawler/mappings/product_public_mapping.jd.sample.csv";
+            String outputDir = workDir + "/crawler/output";
+            String outputJsonFile = outputDir + "/jd_product_public_metrics.json";
+            String outputFile = outputDir + "/jd_product_public_metrics.csv";
             File crawlerFile = new File(crawlerPath);
             if (!crawlerFile.exists()) {
                 return Result.error("爬虫脚本不存在: " + crawlerPath);
@@ -100,8 +108,14 @@ public class DataController {
                 pythonCmd = "python";
             }
 
-            ProcessBuilder pb = new ProcessBuilder(pythonCmd, crawlerPath);
-            pb.directory(new File(workDir + "/crawler"));
+            ProcessBuilder pb = new ProcessBuilder(
+                    pythonCmd,
+                    crawlerPath,
+                    "--mapping", mappingPath,
+                    "--output-dir", outputDir,
+                    "--fixture-dir", workDir + "/crawler/fixtures",
+                    "--sleep-seconds", "0");
+            pb.directory(new File(workDir));
             pb.redirectErrorStream(true); // 合并错误流
 
             Process process = pb.start();
@@ -121,14 +135,23 @@ public class DataController {
 
             Map<String, Object> result = new HashMap<>();
             result.put("status", exitCode == 0 ? "完成" : (finished ? "失败" : "超时"));
-            result.put("outputFile", workDir + "/crawled_user_behavior.csv");
+            result.put("outputFile", outputFile);
+            result.put("outputJsonFile", outputJsonFile);
+            result.put("mappingFile", mappingPath);
+            result.put("sourceFamily", "jd-public-comment-summary");
+            result.put("targetPlatform", "jd");
             result.put("log", output.toString());
 
             if (exitCode != 0) {
                 return Result.error("爬虫执行失败: " + output.toString());
             }
 
-            return Result.success("爬虫执行成功", result);
+            int importedMappings = productPublicMetricService.importMappingsFromCsv(mappingPath);
+            int importedRows = productPublicMetricService.importLatestMetricsFromCsv(outputFile);
+            result.put("importedMappings", importedMappings);
+            result.put("importedRows", importedRows);
+
+            return Result.success("公网满意度采集成功", result);
         } catch (Exception e) {
             log.error("执行爬虫异常", e);
             return Result.error("执行爬虫异常: " + e.getMessage());
