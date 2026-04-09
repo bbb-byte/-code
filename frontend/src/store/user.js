@@ -1,8 +1,9 @@
 import { defineStore } from 'pinia'
+import { clearAuth, getToken, resetAuthExpirationState } from '@/utils/auth'
 
 export const useUserStore = defineStore('user', {
     state: () => ({
-        token: localStorage.getItem('token') || '',
+        token: getToken(),
         userInfo: JSON.parse(localStorage.getItem('userInfo') || '{}')
     }),
 
@@ -16,6 +17,7 @@ export const useUserStore = defineStore('user', {
         setToken(token) {
             this.token = token
             localStorage.setItem('token', token)
+            resetAuthExpirationState()
         },
 
         setUserInfo(info) {
@@ -37,8 +39,8 @@ export const useUserStore = defineStore('user', {
         logout() {
             this.token = ''
             this.userInfo = {}
-            localStorage.removeItem('token')
-            localStorage.removeItem('userInfo')
+            clearAuth()
+            resetAuthExpirationState()
         }
     }
 })

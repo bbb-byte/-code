@@ -62,12 +62,13 @@
 
 <script setup>
 import { ref, reactive } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { useUserStore } from '@/store/user'
 import { login } from '@/api/auth'
 import { ElMessage } from 'element-plus'
 import { DataAnalysis, User, Lock, InfoFilled } from '@element-plus/icons-vue'
 
+const route = useRoute()
 const router = useRouter()
 const userStore = useUserStore()
 
@@ -97,7 +98,7 @@ const handleLogin = async () => {
     const res = await login(form)
     userStore.login(res.data)
     ElMessage.success('登录成功')
-    router.push('/dashboard')
+    router.push((typeof route.query.redirect === 'string' && route.query.redirect) || '/dashboard')
   } catch (error) {
     console.error('登录失败:', error)
   } finally {

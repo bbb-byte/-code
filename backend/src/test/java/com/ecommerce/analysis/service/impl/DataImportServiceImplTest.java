@@ -6,6 +6,8 @@ import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.util.LinkedHashMap;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -35,6 +37,14 @@ class DataImportServiceImplTest {
                 "831122896845,4820710,1101,buy,1281965426,28.0,1");
 
         assertEquals(DataImportServiceImpl.DatasetFormat.CRAWLED, format);
+    }
+
+    @Test
+    void shouldDetectManualFormatFromFlexibleHeader() {
+        DataImportServiceImpl.DatasetFormat format = service.detectFormat(
+                "userId,product_id,category_id,action,time,price,quantity,brand,category_code,session_id");
+
+        assertEquals(DataImportServiceImpl.DatasetFormat.MANUAL, format);
     }
 
     @Test
@@ -70,7 +80,9 @@ class DataImportServiceImplTest {
         DataImportServiceImpl.ParsedRow parsed = service.parseArchiveCsvLine(
                 "2019-10-01 00:00:00 UTC,remove_from_cart,44600062,2103807459595387724,,shiseido,35.79,541312140,session-1");
 
-        assertNull(parsed);
+        assertNotNull(parsed);
+        assertFalse(parsed.isValid());
+        assertEquals(DataImportServiceImpl.ParseFailureReason.UNSUPPORTED_BEHAVIOR, parsed.failureReason);
     }
 
     @Test
@@ -95,17 +107,83 @@ class DataImportServiceImplTest {
         assertEquals(Long.valueOf(1101L), product.getCategoryId());
         assertEquals("商品#4820710", product.getName());
         assertEquals(new BigDecimal("28.0"), product.getPrice());
+        assertTrue(parsed.preprocessed);
     }
 
     @Test
-    void shouldDefaultMissingCrawledValuesDuringPreprocessing() {
+    void shouldRejectCrawledRowWhenCoreIdsAreMissing() {
         DataImportServiceImpl.ParsedRow parsed = service.parseCrawledCsvLine(
                 ",4820710,1101,pv,1281961826,,");
 
         assertNotNull(parsed);
-        assertNotNull(parsed.behavior);
-        assertEquals(Long.valueOf(0L), parsed.behavior.getUserId());
-        assertEquals(BigDecimal.ZERO, parsed.behavior.getUnitPrice());
-        assertEquals(1, parsed.behavior.getQty());
+        assertFalse(parsed.isValid());
+        assertEquals(DataImportServiceImpl.ParseFailureReason.INVALID_VALUE, parsed.failureReason);
+    }
+
+    @Test
+    void shouldParseManualRowWithAutomaticPreprocessing() {
+        DataImportServiceImpl.FlexibleColumnMapping mapping = service.resolveFlexibleColumnMapping(
+                "userId,product_id,category_id,action,time,price,quantity,brand,category_code,session_id");
+
+        DataImportServiceImpl.ParsedRow parsed = service.parseManualCsvLine(
+                "\"831122896845\",\"4820710\",\"1101\",\" Purchase \",\"2010-08-16T13:30:26Z\",\"\",\"0\",\"Kindle\",\"books\",\"session-1\"",
+                mapping);
+
+        assertNotNull(parsed);
+        assertTrue(parsed.isValid());
+        assertTrue(parsed.preprocessed);
+        assertTrue(parsed.defaultedPrice);
+        assertTrue(parsed.defaultedQty);
+
+        UserBehavior behavior = parsed.behavior;
+        Product product = parsed.product;
+
+        assertEquals(Long.valueOf(831122896845L), behavior.getUserId());
+        assertEquals("buy", behavior.getBehaviorType());
+        assertEquals(BigDecimal.ZERO, behavior.getUnitPrice());
+        assertEquals(1, behavior.getQty());
+        assertEquals(LocalDateTime.of(2010, 8, 16, 21, 30, 26), behavior.getBehaviorDateTime());
+
+        assertEquals("Kindle", product.getBrand());
+        assertEquals("books", product.getCategoryName());
+        assertEquals("Kindle #4820710", product.getName());
+    }
+
+    @Test
+    void shouldAllocateSamplingQuotaAcrossMoreDates() {
+        Map<String, Long> dateRowCounts = new LinkedHashMap<>();
+        dateRowCounts.put("2019-10-01", 900L);
+        dateRowCounts.put("2019-10-02", 50L);
+        dateRowCounts.put("2019-10-03", 50L);
+
+        DataImportServiceImpl.SamplingPlan plan = DataImportServiceImpl.SamplingPlan.fromDateCounts(dateRowCounts, 6);
+
+        assertEquals(6L, plan.getPlannedRows());
+        assertTrue(plan.getTargetRowsForDate("2019-10-01") >= 1L);
+        assertTrue(plan.getTargetRowsForDate("2019-10-02") >= 1L);
+        assertTrue(plan.getTargetRowsForDate("2019-10-03") >= 1L);
+    }
+
+    @Test
+    void shouldSampleRowsEvenlyWithinEachDate() {
+        Map<String, Long> dateRowCounts = new LinkedHashMap<>();
+        dateRowCounts.put("2019-10-01", 4L);
+        dateRowCounts.put("2019-10-02", 4L);
+
+        DataImportServiceImpl.SamplingPlan plan = DataImportServiceImpl.SamplingPlan.fromDateCounts(dateRowCounts, 4);
+
+        long firstDaySelected = 0;
+        long secondDaySelected = 0;
+        for (int i = 0; i < 4; i++) {
+            if (plan.shouldImport("2019-10-01")) {
+                firstDaySelected++;
+            }
+            if (plan.shouldImport("2019-10-02")) {
+                secondDaySelected++;
+            }
+        }
+
+        assertEquals(2L, firstDaySelected);
+        assertEquals(2L, secondDaySelected);
     }
 }

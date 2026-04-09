@@ -3,6 +3,7 @@ package com.ecommerce.analysis.controller;
 import com.ecommerce.analysis.common.Result;
 import com.ecommerce.analysis.service.DataImportService;
 import com.ecommerce.analysis.service.RFMService;
+import com.ecommerce.analysis.vo.ImportStatusVO;
 import io.swagger.annotations.Api;
 import io.swagger.annotations.ApiOperation;
 import lombok.extern.slf4j.Slf4j;
@@ -65,11 +66,8 @@ public class DataController {
 
     @ApiOperation("获取导入进度")
     @GetMapping("/import/progress")
-    public Result<Map<String, Object>> getImportProgress() {
-        Map<String, Object> result = new HashMap<>();
-        result.put("importing", dataImportService.isImporting());
-        result.put("progress", dataImportService.getImportProgress());
-        return Result.success(result);
+    public Result<ImportStatusVO> getImportProgress() {
+        return Result.success(dataImportService.getImportStatus());
     }
 
     @ApiOperation("停止导入")

@@ -1,6 +1,8 @@
 package com.ecommerce.analysis.config;
 
 import com.ecommerce.analysis.security.JwtAuthenticationFilter;
+import com.ecommerce.analysis.security.JsonAccessDeniedHandler;
+import com.ecommerce.analysis.security.JsonAuthenticationEntryPoint;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -25,6 +27,12 @@ public class SecurityConfig {
 
     @Autowired
     private JwtAuthenticationFilter jwtAuthenticationFilter;
+
+    @Autowired
+    private JsonAuthenticationEntryPoint jsonAuthenticationEntryPoint;
+
+    @Autowired
+    private JsonAccessDeniedHandler jsonAccessDeniedHandler;
 
     /**
      * 密码编码器
@@ -52,6 +60,10 @@ public class SecurityConfig {
                 .csrf().disable()
                 // 关闭Session
                 .sessionManagement().sessionCreationPolicy(SessionCreationPolicy.STATELESS)
+                .and()
+                .exceptionHandling()
+                .authenticationEntryPoint(jsonAuthenticationEntryPoint)
+                .accessDeniedHandler(jsonAccessDeniedHandler)
                 .and()
                 // 配置请求授权
                 .authorizeRequests()

@@ -1,5 +1,7 @@
 package com.ecommerce.analysis.service;
 
+import com.ecommerce.analysis.vo.ImportStatusVO;
+
 /**
  * 数据导入服务接口
  */
@@ -16,9 +18,9 @@ public interface DataImportService {
     void importCsvData(String filePath, int batchSize, long maxRows);
 
     /**
-     * 获取导入进度
+     * 获取导入状态
      */
-    double getImportProgress();
+    ImportStatusVO getImportStatus();
 
     /**
      * 是否正在导入

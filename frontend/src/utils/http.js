@@ -1,6 +1,7 @@
 import axios from 'axios'
 import { ElMessage } from 'element-plus'
 import router from '@/router'
+import { getToken, handleAuthExpired } from '@/utils/auth'
 
 // 创建axios实例
 const http = axios.create({
@@ -14,7 +15,7 @@ const http = axios.create({
 // 请求拦截器
 http.interceptors.request.use(
     config => {
-        const token = localStorage.getItem('token')
+        const token = getToken()
         if (token) {
             config.headers['Authorization'] = `Bearer ${token}`
         }
@@ -34,12 +35,11 @@ http.interceptors.response.use(
         if (res.code === 200) {
             return res
         } else if (res.code === 401) {
-            // 未授权，跳转登录
-            ElMessage.error('登录已过期，请重新登录')
-            localStorage.removeItem('token')
-            localStorage.removeItem('userInfo')
-            router.push('/login')
+            handleAuthExpired(router)
             return Promise.reject(new Error(res.message))
+        } else if (res.code === 403) {
+            ElMessage.error(res.message || '无权限访问')
+            return Promise.reject(new Error(res.message || '无权限访问'))
         } else {
             ElMessage.error(res.message || '请求失败')
             return Promise.reject(new Error(res.message))
@@ -47,6 +47,18 @@ http.interceptors.response.use(
     },
     error => {
         console.error('请求错误:', error)
+        const status = error.response?.status
+
+        if (status === 401) {
+            handleAuthExpired(router)
+            return Promise.reject(error)
+        }
+
+        if (status === 403) {
+            ElMessage.error(error.response?.data?.message || '无权限访问')
+            return Promise.reject(error)
+        }
+
         ElMessage.error(error.message || '网络错误')
         return Promise.reject(error)
     }

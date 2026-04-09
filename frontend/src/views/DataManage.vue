@@ -2,7 +2,7 @@
   <div class="data-manage">
     <div class="page-header">
       <h2 class="page-title">数据管理</h2>
-      <p class="page-desc">archive 主数据导入、补充采样与预处理中心</p>
+      <p class="page-desc">archive 主数据、补充样本与指定文件导入中心</p>
     </div>
 
     <el-row :gutter="24">
@@ -39,8 +39,11 @@
           <div class="card-title">数据导入</div>
           <el-form :model="importForm" label-width="80px" label-position="left">
             <el-form-item label="文件路径">
-              <el-input v-model="importForm.filePath" placeholder="正式 archive CSV 路径（如 archive/2019-Oct.csv）" />
+              <el-input v-model="importForm.filePath" placeholder="支持 archive、crawler 7 列样本或带标准表头的指定文件" />
             </el-form-item>
+            <div class="import-tips">
+              导入时会自动执行字段清洗、行为类型标准化、时间格式纠正以及价格/数量缺省容错。
+            </div>
             <el-form-item label="批量大小">
               <el-input-number v-model="importForm.batchSize" :min="1000" :max="10000" :step="1000" style="width: 100%" />
             </el-form-item>
@@ -63,6 +66,41 @@
               <span>{{ importProgress }}%</span>
             </div>
             <el-progress :percentage="importProgress" :stroke-width="8" :show-text="false" />
+          </div>
+
+          <div v-if="showImportSummary" class="import-summary">
+            <div class="summary-title">导入摘要</div>
+            <div class="summary-status">{{ importStatus.message || '暂无导入任务' }}</div>
+            <div class="summary-grid">
+              <div class="summary-item">
+                <span class="label">成功入库</span>
+                <span class="value">{{ formatCount(importStatus.insertedRows) }}</span>
+              </div>
+              <div class="summary-item">
+                <span class="label">总跳过</span>
+                <span class="value">{{ formatCount(importStatus.skippedRows) }}</span>
+              </div>
+              <div class="summary-item">
+                <span class="label">文件内重复</span>
+                <span class="value">{{ formatCount(importStatus.inFileDuplicateRows) }}</span>
+              </div>
+              <div class="summary-item">
+                <span class="label">数据库重复</span>
+                <span class="value">{{ formatCount(importStatus.dbDuplicateRows) }}</span>
+              </div>
+              <div class="summary-item">
+                <span class="label">解析失败</span>
+                <span class="value">{{ formatCount(importStatus.parseErrorRows) }}</span>
+              </div>
+              <div class="summary-item">
+                <span class="label">行为类型异常</span>
+                <span class="value">{{ formatCount(importStatus.unsupportedBehaviorRows) }}</span>
+              </div>
+              <div class="summary-item">
+                <span class="label">自动预处理</span>
+                <span class="value">{{ formatCount(importStatus.preprocessedRows) }}</span>
+              </div>
+            </div>
           </div>
         </div>
       </el-col>
@@ -173,7 +211,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, onMounted, onUnmounted } from 'vue'
+import { computed, ref, reactive, onMounted, onUnmounted } from 'vue'
 import { importData, getImportProgress, stopImport, analyzeData, crawlData, getLatestBehaviors } from '@/api/data'
 import { getOverview } from '@/api/analysis'
 import { ElMessage } from 'element-plus'
@@ -184,6 +222,7 @@ const analyzing = ref(false)
 const crawling = ref(false)
 const loadingLatest = ref(false)
 const importProgress = ref(0)
+const importStatus = ref(createEmptyImportStatus())
 const crawlResult = ref(null)
 const latestBehaviors = ref([])
 
@@ -209,6 +248,28 @@ const logs = ref([
 ])
 
 let progressTimer = null
+
+function createEmptyImportStatus() {
+  return {
+    importing: false,
+    progress: 0,
+    totalRows: 0,
+    processedRows: 0,
+    insertedRows: 0,
+    skippedRows: 0,
+    inFileDuplicateRows: 0,
+    dbDuplicateRows: 0,
+    parseErrorRows: 0,
+    unsupportedBehaviorRows: 0,
+    preprocessedRows: 0,
+    defaultedPriceRows: 0,
+    defaultedQtyRows: 0,
+    filePath: '',
+    format: '',
+    message: '',
+    finishedAt: null
+  }
+}
 
 const handleCrawl = async () => {
   crawling.value = true
@@ -242,8 +303,16 @@ const handleImport = async () => {
     return
   }
   
+  if (progressTimer) clearInterval(progressTimer)
   importing.value = true
-  addLog(`开始从路径读取数据: ${importForm.filePath}`, 'primary')
+  importProgress.value = 0
+  importStatus.value = {
+    ...createEmptyImportStatus(),
+    importing: true,
+    filePath: importForm.filePath,
+    message: '导入任务已启动'
+  }
+  addLog(`开始从路径读取数据: ${importForm.filePath}（自动预处理已启用）`, 'primary')
   
   try {
     await importData(importForm.filePath, importForm.batchSize, importForm.maxRows)
@@ -252,14 +321,30 @@ const handleImport = async () => {
     progressTimer = setInterval(async () => {
       try {
         const res = await getImportProgress()
-        importProgress.value = Math.min(res.data.progress, 100)
+        importStatus.value = {
+          ...createEmptyImportStatus(),
+          ...res.data
+        }
+        importProgress.value = Math.min(importStatus.value.progress || 0, 100)
         
-        if (!res.data.importing) {
+        if (!importStatus.value.importing) {
           clearInterval(progressTimer)
+          progressTimer = null
           importing.value = false
-          importProgress.value = 100
-          addLog('✅ 数据导入任务已成功执行完毕！', 'success')
-          ElMessage.success('数据导入完成')
+          if (!importStatus.value.totalRows) {
+            importProgress.value = importStatus.value.insertedRows > 0 ? 100 : 0
+          }
+          addLog(
+            `导入结束：成功 ${formatCount(importStatus.value.insertedRows)} 条，跳过 ${formatCount(importStatus.value.skippedRows)} 条，解析失败 ${formatCount(importStatus.value.parseErrorRows)} 条，自动预处理 ${formatCount(importStatus.value.preprocessedRows)} 条。`,
+            isImportOutcomeError(importStatus.value) ? 'danger' : (importStatus.value.insertedRows > 0 ? 'success' : 'warning')
+          )
+          if (isImportOutcomeError(importStatus.value)) {
+            ElMessage.error(importStatus.value.message || '数据导入失败')
+          } else if (importStatus.value.insertedRows > 0) {
+            ElMessage.success(importStatus.value.message || '数据导入完成')
+          } else {
+            ElMessage.warning(importStatus.value.message || '数据导入结束')
+          }
           loadOverview() 
           loadLatestBehaviors() 
         }
@@ -335,6 +420,12 @@ const formatPrice = (value) => {
   return Number.isFinite(num) ? `¥${num.toFixed(2)}` : value
 }
 
+const formatCount = (value) => Number(value || 0).toLocaleString()
+
+const showImportSummary = computed(() => importing.value || importStatus.value.finishedAt || importStatus.value.insertedRows > 0 || importStatus.value.skippedRows > 0)
+
+const isImportOutcomeError = (status) => /失败|不支持|为空/.test(status?.message || '')
+
 const addLog = (message, type = 'info') => {
   logs.value.unshift({
     id: Date.now(),
@@ -383,6 +474,56 @@ onUnmounted(() => {
     padding: 16px;
     background: var(--bg-color-page);
     border-radius: 8px;
+  }
+
+  .import-tips {
+    margin: -4px 0 16px;
+    font-size: 13px;
+    line-height: 1.6;
+    color: var(--text-secondary);
+  }
+
+  .import-summary {
+    margin-top: 16px;
+    padding: 16px;
+    background: var(--bg-color-page);
+    border-radius: 8px;
+    border: 1px solid var(--border-light);
+
+    .summary-title {
+      font-weight: 600;
+      color: var(--text-primary);
+      margin-bottom: 6px;
+    }
+
+    .summary-status {
+      font-size: 13px;
+      color: var(--text-secondary);
+      margin-bottom: 12px;
+      line-height: 1.5;
+    }
+
+    .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px 16px;
+    }
+
+    .summary-item {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      font-size: 13px;
+    }
+
+    .label {
+      color: var(--text-secondary);
+    }
+
+    .value {
+      color: var(--text-primary);
+      font-weight: 600;
+    }
   }
   
   .analyze-tips {

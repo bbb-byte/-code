@@ -1,4 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router'
+import { ElMessage } from 'element-plus'
+import { getToken, handleAuthExpired, isAdminUser, isTokenExpired } from '@/utils/auth'
 
 const routes = [
     {
@@ -68,12 +70,32 @@ router.beforeEach((to, from, next) => {
     // 设置页面标题
     document.title = to.meta.title ? `${to.meta.title} - 电商用户行为分析系统` : '电商用户行为分析系统'
 
-    const token = localStorage.getItem('token')
+    const token = getToken()
+    const hasValidToken = token && !isTokenExpired(token)
 
     if (to.meta.public) {
+        if (to.path === '/login' && hasValidToken) {
+            next((typeof to.query.redirect === 'string' && to.query.redirect) || '/dashboard')
+            return
+        }
         next()
-    } else if (!token) {
-        next('/login')
+    } else if (!hasValidToken) {
+        if (token) {
+            handleAuthExpired(router, {
+                redirect: to.fullPath,
+                notify: true
+            })
+            next(false)
+            return
+        }
+
+        next({
+            path: '/login',
+            query: { redirect: to.fullPath }
+        })
+    } else if (to.meta.admin && !isAdminUser()) {
+        ElMessage.error('无权限访问该页面')
+        next('/dashboard')
     } else {
         next()
     }

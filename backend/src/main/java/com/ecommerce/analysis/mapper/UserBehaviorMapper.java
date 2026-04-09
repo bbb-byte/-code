@@ -2,6 +2,7 @@ package com.ecommerce.analysis.mapper;
 
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import com.ecommerce.analysis.entity.UserBehavior;
+import org.apache.ibatis.annotations.Insert;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
@@ -14,6 +15,11 @@ import java.util.Map;
  */
 @Mapper
 public interface UserBehaviorMapper extends BaseMapper<UserBehavior> {
+
+        @Insert("INSERT IGNORE INTO user_behavior " +
+                        "(event_id, user_id, item_id, category_id, behavior_type, behavior_time, behavior_date_time, unit_price, qty) " +
+                        "VALUES (#{eventId}, #{userId}, #{itemId}, #{categoryId}, #{behaviorType}, #{behaviorTime}, #{behaviorDateTime}, #{unitPrice}, #{qty})")
+        int insertIgnore(UserBehavior behavior);
 
         /**
          * 获取行为类型统计
