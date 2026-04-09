@@ -5,6 +5,7 @@ import com.ecommerce.analysis.entity.ProductPublicMetric;
 import com.ecommerce.analysis.mapper.ProductPublicMappingMapper;
 import com.ecommerce.analysis.mapper.ProductPublicMetricMapper;
 import com.ecommerce.analysis.service.ProductPublicMetricService;
+import com.ecommerce.analysis.vo.PublicMappingScorePreviewVO;
 import com.ecommerce.analysis.vo.PublicMappingScoreRowVO;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
@@ -27,6 +28,9 @@ import java.util.Map;
  */
 @Service
 public class ProductPublicMetricServiceImpl implements ProductPublicMetricService {
+
+    private static final int DEFAULT_SCORE_PREVIEW_SIZE = 50;
+    private static final int MAX_SCORE_PREVIEW_SIZE = 200;
 
     private static final String SUPPORTED_PLATFORM = "jd";
 
@@ -93,12 +97,22 @@ public class ProductPublicMetricServiceImpl implements ProductPublicMetricServic
     }
 
     @Override
-    public List<PublicMappingScoreRowVO> previewScoreRows(String filePath) throws IOException {
+    public PublicMappingScorePreviewVO previewScoreRows(String filePath, int page, int pageSize) throws IOException {
+        int safePage = Math.max(page, 1);
+        int safePageSize = pageSize <= 0 ? DEFAULT_SCORE_PREVIEW_SIZE : Math.min(pageSize, MAX_SCORE_PREVIEW_SIZE);
+        long skip = (long) (safePage - 1) * safePageSize;
+        long total = 0L;
         List<PublicMappingScoreRowVO> rows = new ArrayList<>();
+
         try (BufferedReader reader = new BufferedReader(new FileReader(filePath))) {
             String headerLine = reader.readLine();
             if (headerLine == null || headerLine.trim().isEmpty()) {
-                return rows;
+                PublicMappingScorePreviewVO result = new PublicMappingScorePreviewVO();
+                result.setPage(safePage);
+                result.setPageSize(safePageSize);
+                result.setTotal(0);
+                result.setRows(rows);
+                return result;
             }
 
             Map<String, Integer> headerIndex = parseHeader(headerLine);
@@ -110,11 +124,23 @@ public class ProductPublicMetricServiceImpl implements ProductPublicMetricServic
 
                 PublicMappingScoreRowVO row = parseScoreRow(line, headerIndex);
                 if (row != null) {
-                    rows.add(row);
+                    total++;
+                    if (total <= skip) {
+                        continue;
+                    }
+                    if (rows.size() < safePageSize) {
+                        rows.add(row);
+                    }
                 }
             }
         }
-        return rows;
+
+        PublicMappingScorePreviewVO result = new PublicMappingScorePreviewVO();
+        result.setPage(safePage);
+        result.setPageSize(safePageSize);
+        result.setTotal(total);
+        result.setRows(rows);
+        return result;
     }
 
     @Override
@@ -128,6 +154,7 @@ public class ProductPublicMetricServiceImpl implements ProductPublicMetricServic
             if (mapping == null) {
                 continue;
             }
+            releaseConflictingSourceProduct(mapping);
             productPublicMappingMapper.upsert(mapping);
             confirmedRows++;
         }
@@ -278,6 +305,30 @@ public class ProductPublicMetricServiceImpl implements ProductPublicMetricServic
         mapping.setEvidenceNote(defaultIfBlank(row.getEvidenceNote(), buildEvidenceNote(row)));
         mapping.setVerifiedAt(LocalDateTime.now());
         return mapping;
+    }
+
+    private void releaseConflictingSourceProduct(ProductPublicMapping mapping) {
+        if (mapping == null || mapping.getItemId() == null) {
+            return;
+        }
+        String sourcePlatform = normalizePlatform(mapping.getSourcePlatform());
+        String sourceProductId = trimToNull(mapping.getSourceProductId());
+        if (sourcePlatform == null || sourceProductId == null) {
+            return;
+        }
+
+        ProductPublicMapping existing = productPublicMappingMapper.selectBySourcePlatformAndProductId(sourcePlatform, sourceProductId);
+        if (existing == null || existing.getId() == null) {
+            return;
+        }
+        if (mapping.getItemId().equals(existing.getItemId())) {
+            return;
+        }
+
+        if (existing.getItemId() != null) {
+            productPublicMetricMapper.deleteByItemAndPlatform(existing.getItemId(), sourcePlatform);
+        }
+        productPublicMappingMapper.deleteById(existing.getId());
     }
 
     private String buildVerificationNote(PublicMappingScoreRowVO row) {

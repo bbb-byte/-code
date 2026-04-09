@@ -1,7 +1,6 @@
 import csv
 import subprocess
 import sys
-import tempfile
 import unittest
 from pathlib import Path
 
@@ -42,37 +41,40 @@ class MappingCandidateRecallTest(unittest.TestCase):
         self.assertEqual(1, rows[0].rank)
 
     def test_cli_generates_candidate_csv_from_fixture(self):
-        with tempfile.TemporaryDirectory() as temp_dir:
-            base = Path(temp_dir)
-            products_path = base / "products.csv"
-            output_path = base / "candidates.csv"
+        output_root = Path(__file__).parent / "output"
+        output_root.mkdir(exist_ok=True)
+        base = output_root / "test_cli_generates_candidate_csv_from_fixture"
+        base.mkdir(exist_ok=True)
+        products_path = base / "products.csv"
+        output_path = base / "candidates.csv"
 
-            with products_path.open("w", encoding="utf-8", newline="") as handle:
-                writer = csv.writer(handle)
-                writer.writerow(["item_id", "brand", "category_name", "price"])
-                writer.writerow([44600062, "shiseido", "beauty/skincare", "35.79"])
+        with products_path.open("w", encoding="utf-8", newline="") as handle:
+            writer = csv.writer(handle)
+            writer.writerow(["item_id", "brand", "category_name", "price"])
+            writer.writerow([44600062, "shiseido", "beauty/skincare", "35.79"])
 
-            subprocess.run(
-                [
-                    "python3",
-                    "crawler/mapping_candidate_recall.py",
-                    "--products",
-                    str(products_path),
-                    "--fixture-dir",
-                    "crawler/fixtures",
-                    "--output",
-                    str(output_path),
-                    "--top-k",
-                    "2",
-                ],
-                cwd=Path(__file__).resolve().parent.parent,
-                check=True,
-            )
+        subprocess.run(
+            [
+                sys.executable,
+                "crawler/mapping_candidate_recall.py",
+                "--products",
+                str(products_path),
+                "--fixture-dir",
+                "crawler/fixtures",
+                "--allow-sample-fallback",
+                "--output",
+                str(output_path),
+                "--top-k",
+                "2",
+            ],
+            cwd=Path(__file__).resolve().parent.parent,
+            check=True,
+        )
 
-            rows = output_path.read_text(encoding="utf-8").strip().splitlines()
-            self.assertEqual(3, len(rows))
-            self.assertIn("100012043978", rows[1])
-            self.assertIn("jd_search", rows[1])
+        rows = output_path.read_text(encoding="utf-8").strip().splitlines()
+        self.assertEqual(3, len(rows))
+        self.assertIn("100012043978", rows[1])
+        self.assertIn("jd_search", rows[1])
 
 
 if __name__ == "__main__":

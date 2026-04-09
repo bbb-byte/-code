@@ -182,7 +182,7 @@
           </el-col>
           <el-col :xs="24" :md="12">
             <el-form-item label="夹具目录">
-              <el-input v-model="mappingForm.fixtureDir" placeholder="可选，本地离线夹具目录" />
+              <el-input v-model="mappingForm.fixtureDir" placeholder="可选，仅在你准备了 jd_search_商品ID.html 这类离线夹具时填写" />
             </el-form-item>
           </el-col>
         </el-row>
@@ -202,6 +202,11 @@
               <el-input-number v-model="mappingForm.topK" :min="1" :max="20" style="width: 100%" />
             </el-form-item>
           </el-col>
+          <el-col :xs="24" :md="8">
+            <el-form-item label="最大商品数">
+              <el-input-number v-model="mappingForm.maxProducts" :min="0" :max="5000" :step="50" style="width: 100%" />
+            </el-form-item>
+          </el-col>
         </el-row>
         <div class="mapping-actions">
           <el-button type="warning" plain @click="handleRecallCandidates" :loading="recallingCandidates">
@@ -213,6 +218,9 @@
           <el-button @click="loadScorePreview" :loading="loadingScorePreview" plain>
             <el-icon><Refresh /></el-icon> 刷新评分预览
           </el-button>
+        </div>
+        <div v-if="mappingForm.fixtureDir" class="mapping-note">
+          当前填写了夹具目录，召回会优先读取该目录下按商品拆分的离线页面，例如 `jd_search_1001588.html`。如果目录里只有通用 sample 文件，结果只适合演示，不适合批量确认入库。
         </div>
       </el-form>
 
@@ -286,6 +294,9 @@
         <div class="mapping-preview-header">
           <div class="preview-title">评分结果预览</div>
           <div class="preview-actions">
+            <span class="preview-page-meta" v-if="scorePreviewTotal">
+              共 {{ scorePreviewTotal }} 条，当前第 {{ scorePreviewPage }} / {{ Math.max(1, Math.ceil(scorePreviewTotal / scorePreviewPageSize)) }} 页
+            </span>
             <el-button size="small" plain @click="selectSuggestedRows" :disabled="!scorePreviewRows.length">
               按建议全选
             </el-button>
@@ -347,6 +358,18 @@
             </template>
           </el-table-column>
         </el-table>
+        <div class="pagination-wrap" v-if="scorePreviewTotal > 0">
+          <el-pagination
+            background
+            layout="total, prev, pager, next, sizes"
+            :current-page="scorePreviewPage"
+            :page-size="scorePreviewPageSize"
+            :page-sizes="[20, 50, 100, 200]"
+            :total="scorePreviewTotal"
+            @current-change="handleScorePreviewPageChange"
+            @size-change="handleScorePreviewSizeChange"
+          />
+        </div>
       </div>
       <div class="mapping-preview">
         <div class="mapping-preview-header">
@@ -552,6 +575,9 @@ const scoreResult = ref(null)
 const confirmResult = ref(null)
 const latestBehaviors = ref([])
 const scorePreviewRows = ref([])
+const scorePreviewTotal = ref(0)
+const scorePreviewPage = ref(1)
+const scorePreviewPageSize = ref(50)
 const selectedScoreRows = ref([])
 const scoreTableRef = ref(null)
 const confirmedMappingRows = ref([])
@@ -572,11 +598,12 @@ const analyzeForm = reactive({
 })
 
 const mappingForm = reactive({
-  sourceDataPath: '',
+  sourceDataPath: 'archive/2020-Apr-demo.csv',
   productPath: 'crawler/mappings/internal_products.sample.csv',
   generatedProductPath: 'crawler/output/internal_products.auto.csv',
-  fixtureDir: 'crawler/fixtures',
+  fixtureDir: '',
   topK: 5,
+  maxProducts: 50,
   candidateOutputPath: 'crawler/output/recalled_candidates.csv',
   scoreOutputPath: 'crawler/output/recalled_candidate_scores.csv'
 })
@@ -676,7 +703,8 @@ const handleRecallCandidates = async () => {
       mappingForm.fixtureDir,
       mappingForm.sourceDataPath,
       mappingForm.generatedProductPath,
-      mappingForm.topK
+      mappingForm.topK,
+      mappingForm.maxProducts
     )
     lastStartedTaskId.value = res.data.taskId || ''
     currentPublicTask.value = {
@@ -702,6 +730,8 @@ const handleRecallCandidates = async () => {
         scoreResult.value = null
         confirmResult.value = null
         scorePreviewRows.value = []
+        scorePreviewTotal.value = 0
+        scorePreviewPage.value = 1
         selectedScoreRows.value = []
         addLog(`候选召回完成：已生成候选文件 ${task.result?.outputFile}`, 'success')
         ElMessage.success('候选召回完成，请继续执行映射评分')
@@ -742,6 +772,7 @@ const handleScoreCandidates = async () => {
     pollPublicTask(res.data.taskId, {
       onSuccess: async (task) => {
         scoreResult.value = task.result || {}
+        scorePreviewPage.value = 1
         await loadScorePreview()
         addLog(`映射评分完成：已生成评分文件 ${task.result?.outputFile}`, 'success')
         ElMessage.success('映射评分完成')
@@ -796,17 +827,35 @@ const pollPublicTask = (taskId, handlers = {}) => {
 const loadScorePreview = async () => {
   loadingScorePreview.value = true
   try {
-    const res = await previewPublicMappingScores(mappingForm.scoreOutputPath)
-    scorePreviewRows.value = res.data || []
+    const res = await previewPublicMappingScores(
+      mappingForm.scoreOutputPath,
+      scorePreviewPage.value,
+      scorePreviewPageSize.value
+    )
+    const preview = res.data || {}
+    scorePreviewRows.value = Array.isArray(preview.rows) ? preview.rows : []
+    scorePreviewTotal.value = Number(preview.total || 0)
     selectedScoreRows.value = []
     await nextTick()
     selectSuggestedRows()
   } catch (error) {
     scorePreviewRows.value = []
+    scorePreviewTotal.value = 0
     addLog('评分结果预览加载失败: ' + (error.response?.data?.message || error.message), 'danger')
   } finally {
     loadingScorePreview.value = false
   }
+}
+
+const handleScorePreviewPageChange = (page) => {
+  scorePreviewPage.value = page
+  loadScorePreview()
+}
+
+const handleScorePreviewSizeChange = (pageSize) => {
+  scorePreviewPageSize.value = pageSize
+  scorePreviewPage.value = 1
+  loadScorePreview()
 }
 
 const handleScoreSelectionChange = (rows) => {
@@ -1345,6 +1394,18 @@ onUnmounted(() => {
       display: flex;
       gap: 8px;
       flex-wrap: wrap;
+      align-items: center;
+    }
+
+    .preview-page-meta {
+      font-size: 12px;
+      color: var(--text-secondary);
+    }
+
+    .pagination-wrap {
+      margin-top: 12px;
+      display: flex;
+      justify-content: flex-end;
     }
   }
   

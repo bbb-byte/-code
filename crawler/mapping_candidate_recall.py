@@ -29,9 +29,22 @@ class SearchCandidate:
 
 
 class JDCandidateRecall:
-    def __init__(self, timeout: int = DEFAULT_TIMEOUT, fixture_dir: Optional[Path] = None):
+    def __init__(
+        self,
+        timeout: int = DEFAULT_TIMEOUT,
+        fixture_dir: Optional[Path] = None,
+        allow_sample_fallback: bool = False,
+    ):
         self.timeout = timeout
         self.fixture_dir = fixture_dir
+        self.allow_sample_fallback = allow_sample_fallback
+        self.shared_sample_hits = 0
+        self.debug_dir: Optional[Path] = None
+
+    def set_debug_dir(self, debug_dir: Optional[Path]) -> None:
+        self.debug_dir = debug_dir
+        if self.debug_dir:
+            self.debug_dir.mkdir(parents=True, exist_ok=True)
 
     def build_keyword(self, brand: str, category_name: str) -> str:
         brand_part = (brand or "").strip()
@@ -54,7 +67,8 @@ class JDCandidateRecall:
                 return item_fixture.read_text(encoding="utf-8")
 
             sample_fixture = self.fixture_dir / "jd_search_result.sample.html"
-            if sample_fixture.exists():
+            if self.allow_sample_fallback and sample_fixture.exists():
+                self.shared_sample_hits += 1
                 return sample_fixture.read_text(encoding="utf-8")
 
         response = requests.get(
@@ -66,7 +80,21 @@ class JDCandidateRecall:
         response.raise_for_status()
         return response.text
 
-    def parse_search_results(self, html: str, brand_hint: str = "", category_hint: str = "", top_k: int = DEFAULT_TOP_K) -> List[SearchCandidate]:
+    def save_debug_html(self, item_id: int, keyword: str, html: str) -> Optional[Path]:
+        if not self.debug_dir:
+            return None
+        safe_keyword = re.sub(r"[^0-9a-zA-Z\u4e00-\u9fff_-]+", "_", keyword).strip("_") or "empty"
+        debug_path = self.debug_dir / f"jd_search_debug_{item_id}_{safe_keyword[:40]}.html"
+        debug_path.write_text(html, encoding="utf-8")
+        return debug_path
+
+    def parse_search_results(
+        self,
+        html: str,
+        brand_hint: str = "",
+        category_hint: str = "",
+        top_k: int = DEFAULT_TOP_K,
+    ) -> List[SearchCandidate]:
         candidates: List[SearchCandidate] = []
         pattern = re.compile(
             r'<li[^>]*class="[^"]*gl-item[^"]*"[^>]*data-sku="(?P<sku>\d+)"[^>]*>(?P<body>.*?)</li>',
@@ -77,14 +105,32 @@ class JDCandidateRecall:
                 break
             body = match.group("body")
             sku = match.group("sku")
-            source_url = self.extract_first(body, r'<a[^>]+href="(?P<url>//item\.jd\.com/\d+\.html|https?://item\.jd\.com/\d+\.html)"')
+            source_url = self.extract_first(
+                body,
+                r'<a[^>]+href="(?P<url>//item\.jd\.com/\d+\.html|https?://item\.jd\.com/\d+\.html)"',
+            )
             if not source_url:
                 source_url = f"https://item.jd.com/{sku}.html"
             elif source_url.startswith("//"):
                 source_url = urljoin("https:", source_url)
-            title = self.clean_html(self.extract_first(body, r'<div[^>]*class="[^"]*p-name[^"]*"[^>]*>.*?<em[^>]*>(?P<value>.*?)</em>'))
-            public_price = self.parse_price(self.extract_first(body, r'<div[^>]*class="[^"]*p-price[^"]*"[^>]*>.*?<i[^>]*>(?P<value>.*?)</i>'))
-            shop_text = self.clean_html(self.extract_first(body, r'<div[^>]*class="[^"]*p-shop[^"]*"[^>]*>.*?<a[^>]*>(?P<value>.*?)</a>'))
+            title = self.clean_html(
+                self.extract_first(
+                    body,
+                    r'<div[^>]*class="[^"]*p-name[^"]*"[^>]*>.*?<em[^>]*>(?P<value>.*?)</em>',
+                )
+            )
+            public_price = self.parse_price(
+                self.extract_first(
+                    body,
+                    r'<div[^>]*class="[^"]*p-price[^"]*"[^>]*>.*?<i[^>]*>(?P<value>.*?)</i>',
+                )
+            )
+            shop_text = self.clean_html(
+                self.extract_first(
+                    body,
+                    r'<div[^>]*class="[^"]*p-shop[^"]*"[^>]*>.*?<a[^>]*>(?P<value>.*?)</a>',
+                )
+            )
             public_brand = self.infer_brand(title, brand_hint)
             public_category = self.infer_category(title, category_hint)
             if not title:
@@ -179,12 +225,18 @@ def resolve_path(base_dir: Path, raw_path: str) -> Path:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="京东商品候选召回脚本")
-    parser.add_argument("--products", required=True, help="内部商品快照 CSV 路径")
-    parser.add_argument("--output", required=True, help="候选结果 CSV 路径")
-    parser.add_argument("--fixture-dir", default="", help="本地夹具目录，用于离线验证解析逻辑")
-    parser.add_argument("--top-k", default=DEFAULT_TOP_K, type=int, help="每个商品保留多少候选结果")
-    parser.add_argument("--timeout", default=DEFAULT_TIMEOUT, type=int, help="HTTP 超时时间(秒)")
+    parser = argparse.ArgumentParser(description="Recall JD product candidates for internal products")
+    parser.add_argument("--products", required=True, help="Internal product snapshot CSV path")
+    parser.add_argument("--output", required=True, help="Candidate CSV output path")
+    parser.add_argument("--fixture-dir", default="", help="Optional fixture directory for offline parsing")
+    parser.add_argument(
+        "--allow-sample-fallback",
+        action="store_true",
+        help="Allow shared sample search result fallback for demo runs only",
+    )
+    parser.add_argument("--top-k", default=DEFAULT_TOP_K, type=int, help="Max candidates kept for each product")
+    parser.add_argument("--max-products", default=0, type=int, help="Max number of products to recall; 0 means all")
+    parser.add_argument("--timeout", default=DEFAULT_TIMEOUT, type=int, help="HTTP timeout in seconds")
     return parser
 
 
@@ -195,12 +247,22 @@ def main() -> None:
     output_path = resolve_path(base_dir, args.output)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     fixture_dir = resolve_path(base_dir, args.fixture_dir) if args.fixture_dir else None
+    debug_dir = output_path.parent / "debug"
 
     products = load_products(products_path)
-    recall = JDCandidateRecall(timeout=args.timeout, fixture_dir=fixture_dir)
+    product_list = list(products.values())
+    if args.max_products and args.max_products > 0:
+        product_list = product_list[:args.max_products]
+    recall = JDCandidateRecall(
+        timeout=args.timeout,
+        fixture_dir=fixture_dir,
+        allow_sample_fallback=args.allow_sample_fallback,
+    )
+    recall.set_debug_dir(debug_dir)
 
     rows: List[Dict[str, object]] = []
-    for product in products.values():
+    debug_files: List[Path] = []
+    for product in product_list:
         keyword = recall.build_keyword(product.brand, product.category_name)
         html = recall.fetch_search_page(product.item_id, keyword)
         candidates = recall.parse_search_results(
@@ -209,6 +271,10 @@ def main() -> None:
             category_hint=product.category_name,
             top_k=args.top_k,
         )
+        if not candidates:
+            debug_path = recall.save_debug_html(product.item_id, keyword, html)
+            if debug_path:
+                debug_files.append(debug_path)
         for candidate in candidates:
             rows.append(
                 {
@@ -227,10 +293,18 @@ def main() -> None:
             )
 
     write_rows(output_path, rows)
-    print(f"已读取 {len(products)} 条内部商品快照。")
-    print(f"已输出 {len(rows)} 条候选商品。")
-    print(f"候选文件: {output_path}")
-    print("说明：该脚本只生成候选商品列表，正式映射仍需评分与人工复核。")
+    print(f"Loaded {len(products)} internal products.")
+    if args.max_products and args.max_products > 0:
+        print(f"Processed first {len(product_list)} products due to max-products limit.")
+    print(f"Wrote {len(rows)} candidate rows.")
+    if recall.shared_sample_hits:
+        print(
+            f"Notice: shared sample search page reused for {recall.shared_sample_hits} items; results are demo-only."
+        )
+    if debug_files:
+        print(f"Saved {len(debug_files)} debug search pages to {debug_dir}")
+    print(f"Candidate file: {output_path}")
+    print("This script only generates candidate rows. Final mapping still requires scoring and human review.")
 
 
 if __name__ == "__main__":

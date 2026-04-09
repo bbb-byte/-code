@@ -31,6 +31,10 @@ public interface ProductPublicMappingMapper extends BaseMapper<ProductPublicMapp
     @Select("SELECT COUNT(*) FROM product_public_mapping WHERE item_id = #{itemId} AND source_platform = #{sourcePlatform}")
     int countByItemAndPlatform(@Param("itemId") Long itemId, @Param("sourcePlatform") String sourcePlatform);
 
+    @Select("SELECT * FROM product_public_mapping WHERE source_platform = #{sourcePlatform} AND source_product_id = #{sourceProductId} LIMIT 1")
+    ProductPublicMapping selectBySourcePlatformAndProductId(@Param("sourcePlatform") String sourcePlatform,
+            @Param("sourceProductId") String sourceProductId);
+
     @Select("SELECT * FROM product_public_mapping " +
             "WHERE source_platform = #{sourcePlatform} " +
             "ORDER BY COALESCE(verified_at, update_time, create_time) DESC, id DESC " +

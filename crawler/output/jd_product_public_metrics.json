@@ -10,7 +10,7 @@
     "rating_text": "好评率 97%",
     "crawl_status": "success",
     "raw_payload": "{\"productId\": 10000001, \"commentCount\": 12890, \"commentCountStr\": \"1.2万+\", \"goodRate\": 0.973, \"goodRateShow\": 97, \"scoreRemark\": \"好评率 97%\"}",
-    "crawled_at": "2026-04-09T08:34:52Z"
+    "crawled_at": "2026-04-09T15:02:10Z"
   },
   {
     "item_id": 10000002,
@@ -23,6 +23,6 @@
     "rating_text": "好评率 97%",
     "crawl_status": "success",
     "raw_payload": "{\"productId\": 10000001, \"commentCount\": 12890, \"commentCountStr\": \"1.2万+\", \"goodRate\": 0.973, \"goodRateShow\": 97, \"scoreRemark\": \"好评率 97%\"}",
-    "crawled_at": "2026-04-09T08:34:52Z"
+    "crawled_at": "2026-04-09T15:02:10Z"
   }
 ]

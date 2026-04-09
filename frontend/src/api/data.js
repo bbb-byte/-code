@@ -30,9 +30,9 @@ export function crawlData(mappingPath, outputDir, fixtureDir) {
 }
 
 // 召回公网映射候选商品
-export function recallPublicMappingCandidates(productPath, outputPath, fixtureDir, sourceDataPath = '', generatedProductPath = '', topK = 5) {
+export function recallPublicMappingCandidates(productPath, outputPath, fixtureDir, sourceDataPath = '', generatedProductPath = '', topK = 5, maxProducts = 50) {
     return http.post('/data/public-mapping/recall', null, {
-        params: { productPath, outputPath, fixtureDir, sourceDataPath, generatedProductPath, topK }
+        params: { productPath, outputPath, fixtureDir, sourceDataPath, generatedProductPath, topK, maxProducts }
     })
 }
 
@@ -44,9 +44,9 @@ export function scorePublicMappingCandidates(productPath, candidatePath, outputP
 }
 
 // 预览公网映射评分结果
-export function previewPublicMappingScores(scorePath) {
+export function previewPublicMappingScores(scorePath, page = 1, pageSize = 50) {
     return http.get('/data/public-mapping/score-preview', {
-        params: { scorePath }
+        params: { scorePath, page, pageSize }
     })
 }
 

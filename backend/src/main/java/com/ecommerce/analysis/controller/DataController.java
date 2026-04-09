@@ -8,6 +8,7 @@ import com.ecommerce.analysis.service.ProductPublicMetricService;
 import com.ecommerce.analysis.service.PublicTaskService;
 import com.ecommerce.analysis.service.RFMService;
 import com.ecommerce.analysis.vo.ImportStatusVO;
+import com.ecommerce.analysis.vo.PublicMappingScorePreviewVO;
 import com.ecommerce.analysis.vo.PublicMappingScoreRowVO;
 import com.ecommerce.analysis.vo.PublicTaskStatusVO;
 import io.swagger.annotations.Api;
@@ -109,11 +110,13 @@ public class DataController {
     public Result<Map<String, Object>> recallPublicMappingCandidates(
             @RequestParam(defaultValue = "crawler/mappings/internal_products.sample.csv") String productPath,
             @RequestParam(defaultValue = "crawler/output/recalled_candidates.csv") String outputPath,
-            @RequestParam(defaultValue = "crawler/fixtures") String fixtureDir,
+            @RequestParam(defaultValue = "") String fixtureDir,
             @RequestParam(defaultValue = "") String sourceDataPath,
             @RequestParam(defaultValue = "crawler/output/internal_products.auto.csv") String generatedProductPath,
-            @RequestParam(defaultValue = "5") int topK) {
-        String taskId = publicTaskService.startRecallTask(productPath, outputPath, fixtureDir, sourceDataPath, generatedProductPath, topK);
+            @RequestParam(defaultValue = "5") int topK,
+            @RequestParam(defaultValue = "50") int maxProducts) {
+        String taskId = publicTaskService.startRecallTask(
+                productPath, outputPath, fixtureDir, sourceDataPath, generatedProductPath, topK, maxProducts);
         Map<String, Object> result = new HashMap<>();
         result.put("taskId", taskId);
         result.put("status", "running");
@@ -141,10 +144,12 @@ public class DataController {
 
     @ApiOperation("预览公网映射评分结果")
     @GetMapping("/public-mapping/score-preview")
-    public Result<List<PublicMappingScoreRowVO>> previewPublicMappingScore(
-            @RequestParam(defaultValue = "crawler/output/recalled_candidate_scores.csv") String scorePath) {
+    public Result<PublicMappingScorePreviewVO> previewPublicMappingScore(
+            @RequestParam(defaultValue = "crawler/output/recalled_candidate_scores.csv") String scorePath,
+            @RequestParam(defaultValue = "1") int page,
+            @RequestParam(defaultValue = "50") int pageSize) {
         try {
-            return Result.success(productPublicMetricService.previewScoreRows(resolveWorkspacePath(scorePath)));
+            return Result.success(productPublicMetricService.previewScoreRows(resolveWorkspacePath(scorePath), page, pageSize));
         } catch (Exception e) {
             log.error("读取映射评分预览异常", e);
             return Result.error("读取映射评分预览异常: " + e.getMessage());

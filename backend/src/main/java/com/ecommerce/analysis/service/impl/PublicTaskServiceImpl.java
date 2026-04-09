@@ -8,19 +8,23 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.task.TaskExecutor;
 import org.springframework.stereotype.Service;
 
+import java.io.BufferedReader;
 import java.io.File;
 import java.io.IOException;
+import java.io.InputStreamReader;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.sql.SQLSyntaxErrorException;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
+import java.util.stream.Stream;
 
-/**
- * 公网补充长任务服务实现。
- */
 @Slf4j
 @Service
 public class PublicTaskServiceImpl implements PublicTaskService {
@@ -44,9 +48,9 @@ public class PublicTaskServiceImpl implements PublicTaskService {
 
     @Override
     public String startRecallTask(String productPath, String outputPath, String fixtureDir, String sourceDataPath,
-            String generatedProductPath, int topK) {
+            String generatedProductPath, int topK, int maxProducts) {
         String taskId = createTask("recall", "公网映射候选召回任务已启动");
-        taskExecutor.execute(() -> runRecallTask(taskId, productPath, outputPath, fixtureDir, sourceDataPath, generatedProductPath, topK));
+        taskExecutor.execute(() -> runRecallTask(taskId, productPath, outputPath, fixtureDir, sourceDataPath, generatedProductPath, topK, maxProducts));
         return taskId;
     }
 
@@ -99,7 +103,8 @@ public class PublicTaskServiceImpl implements PublicTaskService {
             String outputFile = resolvedOutputDir + "/jd_product_public_metrics.csv";
 
             updateProgress(status, 10D, "开始执行公网满意度采集脚本");
-            ScriptExecution scriptExecution = runPythonScript(workDir,
+            ScriptExecution scriptExecution = runPythonScript(
+                    workDir,
                     crawlerPath,
                     "--mapping", resolvedMappingPath,
                     "--output-dir", resolvedOutputDir,
@@ -135,7 +140,7 @@ public class PublicTaskServiceImpl implements PublicTaskService {
     }
 
     private void runRecallTask(String taskId, String productPath, String outputPath, String fixtureDir, String sourceDataPath,
-            String generatedProductPath, int topK) {
+            String generatedProductPath, int topK, int maxProducts) {
         PublicTaskStatusVO status = tasks.get(taskId);
         try {
             String workDir = resolveWorkDir();
@@ -150,7 +155,8 @@ public class PublicTaskServiceImpl implements PublicTaskService {
             if (!resolvedSourceDataPath.isEmpty()) {
                 updateProgress(status, 15D, "开始生成商品快照");
                 String effectiveSourceDataPath = resolveWorkspacePath(resolvedSourceDataPath);
-                ScriptExecution snapshotExecution = runPythonScript(workDir,
+                ScriptExecution snapshotExecution = runPythonScript(
+                        workDir,
                         snapshotScriptPath,
                         "--input", effectiveSourceDataPath,
                         "--output", resolvedGeneratedProductPath);
@@ -163,15 +169,26 @@ public class PublicTaskServiceImpl implements PublicTaskService {
             }
 
             updateProgress(status, 60D, "开始召回公网候选商品");
-            ScriptExecution scriptExecution = runPythonScript(workDir,
-                    scriptPath,
+            List<String> args = new ArrayList<>(Arrays.asList(
                     "--products", effectiveProductPath,
                     "--output", resolvedOutputPath,
-                    "--fixture-dir", resolvedFixtureDir,
-                    "--top-k", String.valueOf(topK));
+                    "--top-k", String.valueOf(topK),
+                    "--max-products", String.valueOf(maxProducts)));
+            if (resolvedFixtureDir != null && !resolvedFixtureDir.trim().isEmpty()) {
+                args.add("--fixture-dir");
+                args.add(resolvedFixtureDir);
+            }
+
+            ScriptExecution scriptExecution = runPythonScript(workDir, scriptPath, args.toArray(new String[0]));
             status.setLog(mergeLogs(status.getLog(), scriptExecution.output));
             if (scriptExecution.exitCode != 0) {
                 failTask(status, "候选召回失败: " + scriptExecution.output);
+                return;
+            }
+
+            long candidateRows = countDataRows(resolvedOutputPath);
+            if (candidateRows <= 0) {
+                failTask(status, "候选召回未产出有效数据。当前候选文件只有表头，通常是页面结构变化、被风控拦截，或当前数据源无法召回到可解析结果。");
                 return;
             }
 
@@ -182,6 +199,8 @@ public class PublicTaskServiceImpl implements PublicTaskService {
             result.put("outputFile", resolvedOutputPath);
             result.put("fixtureDir", resolvedFixtureDir);
             result.put("topK", topK);
+            result.put("maxProducts", maxProducts);
+            result.put("candidateRows", candidateRows);
             completeTask(status, "公网映射候选召回完成", result);
         } catch (Exception e) {
             log.error("公网映射候选召回任务异常", e);
@@ -194,22 +213,31 @@ public class PublicTaskServiceImpl implements PublicTaskService {
         try {
             String workDir = resolveWorkDir();
             String scriptPath = workDir + "/crawler/mapping_scorer.py";
+            String resolvedOutputPath = resolveWorkspacePath(outputPath);
             updateProgress(status, 15D, "开始计算公网映射候选分数");
-            ScriptExecution scriptExecution = runPythonScript(workDir,
+            ScriptExecution scriptExecution = runPythonScript(
+                    workDir,
                     scriptPath,
                     "--products", resolveWorkspacePath(productPath),
                     "--candidates", resolveWorkspacePath(candidatePath),
-                    "--output", resolveWorkspacePath(outputPath));
+                    "--output", resolvedOutputPath);
             status.setLog(scriptExecution.output);
             if (scriptExecution.exitCode != 0) {
                 failTask(status, "映射评分失败: " + scriptExecution.output);
                 return;
             }
 
+            long scoreRows = countDataRows(resolvedOutputPath);
+            if (scoreRows <= 0) {
+                failTask(status, "映射评分未产出有效数据。请先确认候选文件不是空文件，再重新执行评分。");
+                return;
+            }
+
             Map<String, Object> result = new HashMap<>();
             result.put("productPath", resolveWorkspacePath(productPath));
             result.put("candidateFile", resolveWorkspacePath(candidatePath));
-            result.put("outputFile", resolveWorkspacePath(outputPath));
+            result.put("outputFile", resolvedOutputPath);
+            result.put("scoreRows", scoreRows);
             completeTask(status, "公网映射评分完成", result);
         } catch (Exception e) {
             log.error("公网映射评分任务异常", e);
@@ -270,7 +298,7 @@ public class PublicTaskServiceImpl implements PublicTaskService {
 
     private ScriptExecution runPythonScript(String workDir, String scriptPath, String... args)
             throws IOException, InterruptedException {
-        java.util.List<String> command = new java.util.ArrayList<>();
+        List<String> command = new ArrayList<>();
         command.add(resolvePythonCommand());
         command.add(scriptPath);
         command.addAll(Arrays.asList(args));
@@ -281,8 +309,7 @@ public class PublicTaskServiceImpl implements PublicTaskService {
 
         Process process = pb.start();
         StringBuilder output = new StringBuilder();
-        try (java.io.BufferedReader reader = new java.io.BufferedReader(
-                new java.io.InputStreamReader(process.getInputStream()))) {
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
             String line;
             while ((line = reader.readLine()) != null) {
                 output.append(line).append("\n");
@@ -295,6 +322,16 @@ public class PublicTaskServiceImpl implements PublicTaskService {
             process.destroyForcibly();
         }
         return new ScriptExecution(exitCode, finished, output.toString());
+    }
+
+    private long countDataRows(String csvPath) throws IOException {
+        Path path = Path.of(csvPath);
+        if (!Files.exists(path)) {
+            return 0;
+        }
+        try (Stream<String> lines = Files.lines(path)) {
+            return Math.max(0, lines.count() - 1);
+        }
     }
 
     private boolean isPublicMetricSchemaMissing(Throwable throwable) {

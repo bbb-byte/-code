@@ -1,6 +1,7 @@
 package com.ecommerce.analysis.service;
 
 import com.ecommerce.analysis.vo.PublicMappingScoreRowVO;
+import com.ecommerce.analysis.vo.PublicMappingScorePreviewVO;
 import com.ecommerce.analysis.entity.ProductPublicMapping;
 
 import java.io.IOException;
@@ -24,7 +25,7 @@ public interface ProductPublicMetricService {
     /**
      * 读取映射评分结果，用于页面预览。
      */
-    List<PublicMappingScoreRowVO> previewScoreRows(String filePath) throws IOException;
+    PublicMappingScorePreviewVO previewScoreRows(String filePath, int page, int pageSize) throws IOException;
 
     /**
      * 将页面确认过的评分结果写入正式映射表。

@@ -4,6 +4,7 @@ import com.ecommerce.analysis.entity.ProductPublicMetric;
 import com.ecommerce.analysis.entity.ProductPublicMapping;
 import com.ecommerce.analysis.mapper.ProductPublicMappingMapper;
 import com.ecommerce.analysis.mapper.ProductPublicMetricMapper;
+import com.ecommerce.analysis.vo.PublicMappingScorePreviewVO;
 import com.ecommerce.analysis.vo.PublicMappingScoreRowVO;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -18,6 +19,7 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -73,9 +75,13 @@ class ProductPublicMetricServiceImplTest {
             writer.write("44600062,shiseido,beauty/skincare,35.79,jd,100012043978,https://item.jd.com/100012043978.html,Shiseido skincare essence,shiseido,beauty/skincare,36.50,0.35,0.20,0.20,0.15,0.10,1.00,fast_review,\"brand,category,price,title,evidence\"\n");
         }
 
-        List<PublicMappingScoreRowVO> rows = service.previewScoreRows(tempFile.getAbsolutePath());
+        PublicMappingScorePreviewVO preview = service.previewScoreRows(tempFile.getAbsolutePath(), 1, 50);
+        List<PublicMappingScoreRowVO> rows = preview.getRows();
 
         assertEquals(1, rows.size());
+        assertEquals(1L, preview.getTotal());
+        assertEquals(1, preview.getPage());
+        assertEquals(50, preview.getPageSize());
         PublicMappingScoreRowVO row = rows.get(0);
         assertEquals(Long.valueOf(44600062L), row.getItemId());
         assertEquals("jd", row.getSourcePlatform());
@@ -86,8 +92,10 @@ class ProductPublicMetricServiceImplTest {
     @Test
     void shouldConfirmMappingsIntoMappingTable() {
         ProductPublicMappingMapper mappingMapper = mock(ProductPublicMappingMapper.class);
+        ProductPublicMetricMapper metricMapper = mock(ProductPublicMetricMapper.class);
         ProductPublicMetricServiceImpl service = new ProductPublicMetricServiceImpl();
         ReflectionTestUtils.setField(service, "productPublicMappingMapper", mappingMapper);
+        ReflectionTestUtils.setField(service, "productPublicMetricMapper", metricMapper);
 
         PublicMappingScoreRowVO row = new PublicMappingScoreRowVO();
         row.setItemId(44600062L);
@@ -103,6 +111,8 @@ class ProductPublicMetricServiceImplTest {
         row.setMappingConfidence(new BigDecimal("0.91"));
         row.setVerificationNote("人工复核通过");
         row.setEvidenceNote("截图与价格已核对");
+
+        when(mappingMapper.selectBySourcePlatformAndProductId("jd", "100012043978")).thenReturn(null);
 
         int confirmed = service.confirmMappings(Collections.singletonList(row));
 
@@ -120,6 +130,38 @@ class ProductPublicMetricServiceImplTest {
         assertEquals("人工复核通过", mapping.getVerificationNote());
         assertEquals("截图与价格已核对", mapping.getEvidenceNote());
         assertNotNull(mapping.getVerifiedAt());
+        verify(metricMapper, times(0)).deleteByItemAndPlatform(any(), any());
+    }
+
+    @Test
+    void shouldReleaseExistingSourceProductConflictBeforeConfirm() {
+        ProductPublicMappingMapper mappingMapper = mock(ProductPublicMappingMapper.class);
+        ProductPublicMetricMapper metricMapper = mock(ProductPublicMetricMapper.class);
+        ProductPublicMetricServiceImpl service = new ProductPublicMetricServiceImpl();
+        ReflectionTestUtils.setField(service, "productPublicMappingMapper", mappingMapper);
+        ReflectionTestUtils.setField(service, "productPublicMetricMapper", metricMapper);
+
+        PublicMappingScoreRowVO row = new PublicMappingScoreRowVO();
+        row.setItemId(44600062L);
+        row.setSourcePlatform("jd");
+        row.setSourceProductId("100012043978");
+        row.setSourceUrl("https://item.jd.com/100012043978.html");
+        row.setPublicTitle("Shiseido skincare essence");
+        row.setTotalScore(new BigDecimal("0.91"));
+
+        ProductPublicMapping existing = new ProductPublicMapping();
+        existing.setId(9L);
+        existing.setItemId(1001588L);
+        existing.setSourcePlatform("jd");
+        existing.setSourceProductId("100012043978");
+        when(mappingMapper.selectBySourcePlatformAndProductId("jd", "100012043978")).thenReturn(existing);
+
+        int confirmed = service.confirmMappings(Collections.singletonList(row));
+
+        assertEquals(1, confirmed);
+        verify(metricMapper, times(1)).deleteByItemAndPlatform(1001588L, "jd");
+        verify(mappingMapper, times(1)).deleteById(9L);
+        verify(mappingMapper, times(1)).upsert(any(ProductPublicMapping.class));
     }
 
     @Test
