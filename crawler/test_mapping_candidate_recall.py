@@ -4,10 +4,11 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from mapping_candidate_recall import JDCandidateRecall
+from mapping_candidate_recall import DEFAULT_HEADERS, JDCandidateRecall
 
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -21,6 +22,13 @@ class MappingCandidateRecallTest(unittest.TestCase):
         keyword = recall.build_keyword("shiseido", "beauty/skincare")
 
         self.assertEqual("shiseido skincare", keyword)
+
+    def test_build_keyword_uses_leaf_category_for_dot_separated_names(self):
+        recall = JDCandidateRecall()
+
+        keyword = recall.build_keyword("apple", "electronics.smartphone")
+
+        self.assertEqual("apple smartphone", keyword)
 
     def test_parse_search_results_extracts_top_candidates(self):
         recall = JDCandidateRecall(fixture_dir=FIXTURES)
@@ -73,6 +81,45 @@ class MappingCandidateRecallTest(unittest.TestCase):
             self.assertEqual(3, len(rows))
             self.assertIn("100012043978", rows[1])
             self.assertIn("jd_search", rows[1])
+
+    def test_session_uses_browser_like_default_headers(self):
+        recall = JDCandidateRecall(fixture_dir=None)
+
+        session = recall.get_session()
+
+        self.assertEqual(DEFAULT_HEADERS["Accept-Language"], session.headers["Accept-Language"])
+        self.assertIn("Mozilla/5.0", session.headers["User-Agent"])
+
+    def test_wait_for_request_slot_respects_global_delay(self):
+        recall = JDCandidateRecall(request_delay=0.5)
+
+        with patch("mapping_candidate_recall.time.monotonic", side_effect=[10.0, 10.2]), \
+                patch("mapping_candidate_recall.time.sleep") as mock_sleep:
+            recall.wait_for_request_slot()
+            recall.wait_for_request_slot()
+
+        mock_sleep.assert_called_once()
+        self.assertAlmostEqual(0.3, mock_sleep.call_args.args[0], places=6)
+
+    def test_fetch_search_page_uses_live_request_when_fixture_dir_is_empty(self):
+        mock_response = Mock()
+        mock_response.text = "<html></html>"
+        mock_response.raise_for_status = Mock()
+
+        recall = JDCandidateRecall(fixture_dir=None)
+        with patch.object(recall, "wait_for_request_slot") as mock_wait, \
+                patch.object(recall.get_session(), "get", return_value=mock_response) as mock_get:
+            html = recall.fetch_search_page(123, "apple smartphone")
+
+        self.assertEqual("<html></html>", html)
+        mock_wait.assert_called_once()
+        mock_get.assert_called_once()
+        _, kwargs = mock_get.call_args
+        self.assertEqual({"keyword": "apple smartphone"}, kwargs["params"])
+        self.assertEqual(
+            "https://search.jd.com/Search?keyword=apple+smartphone",
+            kwargs["headers"]["Referer"],
+        )
 
 
 if __name__ == "__main__":

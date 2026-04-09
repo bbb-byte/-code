@@ -17,6 +17,7 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Consumer;
 
 /**
  * 公网补充长任务服务实现。
@@ -44,9 +45,9 @@ public class PublicTaskServiceImpl implements PublicTaskService {
 
     @Override
     public String startRecallTask(String productPath, String outputPath, String fixtureDir, String sourceDataPath,
-            String generatedProductPath, int topK) {
+            String generatedProductPath, int topK, int maxWorkers) {
         String taskId = createTask("recall", "公网映射候选召回任务已启动");
-        taskExecutor.execute(() -> runRecallTask(taskId, productPath, outputPath, fixtureDir, sourceDataPath, generatedProductPath, topK));
+        taskExecutor.execute(() -> runRecallTask(taskId, productPath, outputPath, fixtureDir, sourceDataPath, generatedProductPath, topK, maxWorkers));
         return taskId;
     }
 
@@ -135,7 +136,7 @@ public class PublicTaskServiceImpl implements PublicTaskService {
     }
 
     private void runRecallTask(String taskId, String productPath, String outputPath, String fixtureDir, String sourceDataPath,
-            String generatedProductPath, int topK) {
+            String generatedProductPath, int topK, int maxWorkers) {
         PublicTaskStatusVO status = tasks.get(taskId);
         try {
             String workDir = resolveWorkDir();
@@ -165,10 +166,12 @@ public class PublicTaskServiceImpl implements PublicTaskService {
             updateProgress(status, 60D, "开始召回公网候选商品");
             ScriptExecution scriptExecution = runPythonScript(workDir,
                     scriptPath,
+                    line -> handleRecallProgress(status, line),
                     "--products", effectiveProductPath,
                     "--output", resolvedOutputPath,
                     "--fixture-dir", resolvedFixtureDir,
-                    "--top-k", String.valueOf(topK));
+                    "--top-k", String.valueOf(topK),
+                    "--max-workers", String.valueOf(Math.max(1, maxWorkers)));
             status.setLog(mergeLogs(status.getLog(), scriptExecution.output));
             if (scriptExecution.exitCode != 0) {
                 failTask(status, "候选召回失败: " + scriptExecution.output);
@@ -182,6 +185,7 @@ public class PublicTaskServiceImpl implements PublicTaskService {
             result.put("outputFile", resolvedOutputPath);
             result.put("fixtureDir", resolvedFixtureDir);
             result.put("topK", topK);
+            result.put("maxWorkers", Math.max(1, maxWorkers));
             completeTask(status, "公网映射候选召回完成", result);
         } catch (Exception e) {
             log.error("公网映射候选召回任务异常", e);
@@ -270,6 +274,11 @@ public class PublicTaskServiceImpl implements PublicTaskService {
 
     private ScriptExecution runPythonScript(String workDir, String scriptPath, String... args)
             throws IOException, InterruptedException {
+        return runPythonScript(workDir, scriptPath, null, args);
+    }
+
+    private ScriptExecution runPythonScript(String workDir, String scriptPath, Consumer<String> lineHandler, String... args)
+            throws IOException, InterruptedException {
         java.util.List<String> command = new java.util.ArrayList<>();
         command.add(resolvePythonCommand());
         command.add(scriptPath);
@@ -285,6 +294,9 @@ public class PublicTaskServiceImpl implements PublicTaskService {
                 new java.io.InputStreamReader(process.getInputStream()))) {
             String line;
             while ((line = reader.readLine()) != null) {
+                if (lineHandler != null) {
+                    lineHandler.accept(line);
+                }
                 output.append(line).append("\n");
             }
         }
@@ -295,6 +307,30 @@ public class PublicTaskServiceImpl implements PublicTaskService {
             process.destroyForcibly();
         }
         return new ScriptExecution(exitCode, finished, output.toString());
+    }
+
+    private void handleRecallProgress(PublicTaskStatusVO status, String line) {
+        if (line == null || !line.startsWith("PROGRESS\t")) {
+            return;
+        }
+        String[] parts = line.split("\t", 5);
+        if (parts.length < 5) {
+            return;
+        }
+        try {
+            int current = Integer.parseInt(parts[1]);
+            int total = Integer.parseInt(parts[2]);
+            String itemId = parts[3];
+            String keyword = parts[4];
+            if (total <= 0) {
+                return;
+            }
+            double phaseProgress = 60D + (35D * current / total);
+            updateProgress(status, phaseProgress,
+                    String.format("开始召回公网候选商品（%d/%d，item_id=%s，keyword=%s）", current, total, itemId, keyword));
+        } catch (NumberFormatException ignored) {
+            // Ignore malformed progress lines and keep the last visible progress.
+        }
     }
 
     private boolean isPublicMetricSchemaMissing(Throwable throwable) {

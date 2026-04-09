@@ -96,7 +96,7 @@ public class DataController {
     public Result<Map<String, Object>> crawlData(
             @RequestParam(defaultValue = "crawler/mappings/product_public_mapping.jd.sample.csv") String mappingPath,
             @RequestParam(defaultValue = "crawler/output") String outputDir,
-            @RequestParam(defaultValue = "crawler/fixtures") String fixtureDir) {
+            @RequestParam(defaultValue = "") String fixtureDir) {
         String taskId = publicTaskService.startCrawlTask(mappingPath, outputDir, fixtureDir);
         Map<String, Object> result = new HashMap<>();
         result.put("taskId", taskId);
@@ -109,11 +109,12 @@ public class DataController {
     public Result<Map<String, Object>> recallPublicMappingCandidates(
             @RequestParam(defaultValue = "crawler/mappings/internal_products.sample.csv") String productPath,
             @RequestParam(defaultValue = "crawler/output/recalled_candidates.csv") String outputPath,
-            @RequestParam(defaultValue = "crawler/fixtures") String fixtureDir,
+            @RequestParam(defaultValue = "") String fixtureDir,
             @RequestParam(defaultValue = "") String sourceDataPath,
             @RequestParam(defaultValue = "crawler/output/internal_products.auto.csv") String generatedProductPath,
-            @RequestParam(defaultValue = "5") int topK) {
-        String taskId = publicTaskService.startRecallTask(productPath, outputPath, fixtureDir, sourceDataPath, generatedProductPath, topK);
+            @RequestParam(defaultValue = "5") int topK,
+            @RequestParam(defaultValue = "4") int maxWorkers) {
+        String taskId = publicTaskService.startRecallTask(productPath, outputPath, fixtureDir, sourceDataPath, generatedProductPath, topK, maxWorkers);
         Map<String, Object> result = new HashMap<>();
         result.put("taskId", taskId);
         result.put("status", "running");

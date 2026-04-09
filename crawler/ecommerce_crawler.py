@@ -14,6 +14,17 @@ JD_PLATFORM = "jd"
 JD_COMMENT_SUMMARY_URL = "https://club.jd.com/comment/productCommentSummaries.action"
 DEFAULT_TIMEOUT = 10
 DEFAULT_SLEEP_SECONDS = 0.5
+DEFAULT_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/124.0.0.0 Safari/537.36"
+    ),
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+    "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+    "Cache-Control": "no-cache",
+    "Pragma": "no-cache",
+}
 
 
 @dataclass
@@ -37,6 +48,8 @@ class JDPublicSatisfactionCrawler:
         self.timeout = timeout
         self.sleep_seconds = sleep_seconds
         self.fixture_dir = fixture_dir
+        self.session = requests.Session()
+        self.session.headers.update(DEFAULT_HEADERS)
 
     def load_mapping_rows(self, path: Path) -> List[MappingRow]:
         rows: List[MappingRow] = []
@@ -114,10 +127,10 @@ class JDPublicSatisfactionCrawler:
             if sample_json.exists():
                 return self.parse_summary_payload(sample_json.read_text(encoding="utf-8"))[0]
 
-        response = requests.get(
+        response = self.session.get(
             JD_COMMENT_SUMMARY_URL,
             params={"referenceIds": row.source_product_id},
-            headers={"User-Agent": "Mozilla/5.0", "Referer": row.source_url},
+            headers={"Referer": row.source_url},
             timeout=self.timeout,
         )
         response.raise_for_status()
@@ -137,9 +150,8 @@ class JDPublicSatisfactionCrawler:
             if sample_html.exists():
                 return sample_html.read_text(encoding="utf-8")
 
-        response = requests.get(
+        response = self.session.get(
             row.source_url,
-            headers={"User-Agent": "Mozilla/5.0"},
             timeout=self.timeout,
         )
         response.raise_for_status()

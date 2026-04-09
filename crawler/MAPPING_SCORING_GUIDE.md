@@ -55,7 +55,6 @@ crawler/output/internal_products.from-archive.csv
 ```bash
 python3 crawler/mapping_candidate_recall.py \
   --products crawler/mappings/internal_products.sample.csv \
-  --fixture-dir crawler/fixtures \
   --output crawler/output/recalled_candidates.csv \
   --top-k 5
 
@@ -66,6 +65,7 @@ python3 crawler/mapping_scorer.py \
 ```
 
 第一步先召回公网候选商品，第二步再打分并给出复核建议。
+需要离线验证解析逻辑时，再额外传 `--fixture-dir crawler/fixtures`。
 
 ## 打分字段
 

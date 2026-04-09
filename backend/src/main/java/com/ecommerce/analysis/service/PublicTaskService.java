@@ -10,7 +10,7 @@ public interface PublicTaskService {
     String startCrawlTask(String mappingPath, String outputDir, String fixtureDir);
 
     String startRecallTask(String productPath, String outputPath, String fixtureDir, String sourceDataPath,
-            String generatedProductPath, int topK);
+            String generatedProductPath, int topK, int maxWorkers);
 
     String startScoreTask(String productPath, String candidatePath, String outputPath);
 

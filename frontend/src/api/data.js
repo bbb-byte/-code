@@ -30,9 +30,9 @@ export function crawlData(mappingPath, outputDir, fixtureDir) {
 }
 
 // 召回公网映射候选商品
-export function recallPublicMappingCandidates(productPath, outputPath, fixtureDir, sourceDataPath = '', generatedProductPath = '', topK = 5) {
+export function recallPublicMappingCandidates(productPath, outputPath, fixtureDir, sourceDataPath = '', generatedProductPath = '', topK = 5, maxWorkers = 4) {
     return http.post('/data/public-mapping/recall', null, {
-        params: { productPath, outputPath, fixtureDir, sourceDataPath, generatedProductPath, topK }
+        params: { productPath, outputPath, fixtureDir, sourceDataPath, generatedProductPath, topK, maxWorkers }
     })
 }
 

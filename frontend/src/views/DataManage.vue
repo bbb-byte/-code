@@ -202,6 +202,11 @@
               <el-input-number v-model="mappingForm.topK" :min="1" :max="20" style="width: 100%" />
             </el-form-item>
           </el-col>
+          <el-col :xs="24" :md="8">
+            <el-form-item label="并发数">
+              <el-input-number v-model="mappingForm.maxWorkers" :min="1" :max="12" style="width: 100%" />
+            </el-form-item>
+          </el-col>
         </el-row>
         <div class="mapping-actions">
           <el-button type="warning" plain @click="handleRecallCandidates" :loading="recallingCandidates">
@@ -575,8 +580,9 @@ const mappingForm = reactive({
   sourceDataPath: '',
   productPath: 'crawler/mappings/internal_products.sample.csv',
   generatedProductPath: 'crawler/output/internal_products.auto.csv',
-  fixtureDir: 'crawler/fixtures',
+  fixtureDir: '',
   topK: 5,
+  maxWorkers: 4,
   candidateOutputPath: 'crawler/output/recalled_candidates.csv',
   scoreOutputPath: 'crawler/output/recalled_candidate_scores.csv'
 })
@@ -676,7 +682,8 @@ const handleRecallCandidates = async () => {
       mappingForm.fixtureDir,
       mappingForm.sourceDataPath,
       mappingForm.generatedProductPath,
-      mappingForm.topK
+      mappingForm.topK,
+      mappingForm.maxWorkers
     )
     lastStartedTaskId.value = res.data.taskId || ''
     currentPublicTask.value = {

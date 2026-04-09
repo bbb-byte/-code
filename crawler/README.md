@@ -43,14 +43,14 @@ curl -X POST 'http://localhost:8080/api/data/crawl?mappingPath=crawler/mappings/
 如果你已经有商品快照 CSV，直接做候选召回：
 
 ```bash
-curl -X POST 'http://localhost:8080/api/data/public-mapping/recall?productPath=crawler/mappings/internal_products.sample.csv&outputPath=crawler/output/recalled_candidates.csv&fixtureDir=crawler/fixtures&topK=5' \
+curl -X POST 'http://localhost:8080/api/data/public-mapping/recall?productPath=crawler/mappings/internal_products.sample.csv&outputPath=crawler/output/recalled_candidates.csv&topK=5' \
   -H 'Authorization: Bearer <token>'
 ```
 
 如果你只有 Kaggle/archive 原始行为文件，让后端先自动生成商品快照再继续召回：
 
 ```bash
-curl -X POST 'http://localhost:8080/api/data/public-mapping/recall?sourceDataPath=archive/2019-Oct.csv&generatedProductPath=crawler/output/internal_products.auto.csv&productPath=crawler/mappings/internal_products.sample.csv&outputPath=crawler/output/recalled_candidates.csv&fixtureDir=crawler/fixtures&topK=5' \
+curl -X POST 'http://localhost:8080/api/data/public-mapping/recall?sourceDataPath=archive/2019-Oct.csv&generatedProductPath=crawler/output/internal_products.auto.csv&productPath=crawler/mappings/internal_products.sample.csv&outputPath=crawler/output/recalled_candidates.csv&topK=5' \
   -H 'Authorization: Bearer <token>'
 ```
 
@@ -58,3 +58,4 @@ curl -X POST 'http://localhost:8080/api/data/public-mapping/recall?sourceDataPat
 - 传了 `sourceDataPath` 时，后端会先执行 `build_internal_products_snapshot.py`
 - 不传 `sourceDataPath` 时，后端直接使用 `productPath`
 - `productPath` 现在既可以是 sample 文件，也可以是你自己生成的商品快照文件
+- `fixtureDir` 默认留空，只有离线调试/测试解析逻辑时才传 `crawler/fixtures`
