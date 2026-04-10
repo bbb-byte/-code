@@ -7,9 +7,9 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const frontendDir = path.resolve(__dirname, "..");
 const projectRoot = path.resolve(frontendDir, "..");
-const userDataDir = path.join(frontendDir, ".jd-edge-profile");
+const userDataDir = path.join(frontendDir, ".jd-chrome-profile");
 const debugDir = path.join(projectRoot, "crawler", "output", "debug");
-const edgePath = "C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe";
+const chromePath = "C:/Program Files/Google/Chrome/Application/chrome.exe";
 
 const keyword = process.argv.slice(2).join(" ").trim() || "apple smartphone";
 const targetUrl = `https://search.jd.com/Search?keyword=${encodeURIComponent(keyword)}`;
@@ -19,15 +19,22 @@ const storageStatePath = path.join(debugDir, "jd_browser_storage_state.json");
 fs.mkdirSync(userDataDir, { recursive: true });
 fs.mkdirSync(debugDir, { recursive: true });
 
-console.log(`Opening Edge for JD search check: ${keyword}`);
+console.log(`Opening Chrome for JD search check: ${keyword}`);
 console.log(`Profile dir: ${userDataDir}`);
 console.log("If JD asks you to log in, please complete login in the opened browser window.");
 
 const context = await chromium.launchPersistentContext(userDataDir, {
-  executablePath: edgePath,
+  executablePath: chromePath,
   headless: false,
   locale: "zh-CN",
   viewport: { width: 1440, height: 960 },
+  args: [
+    "--disable-blink-features=AutomationControlled",
+    "--disable-infobars",
+    "--no-first-run",
+    "--no-default-browser-check",
+  ],
+  ignoreDefaultArgs: ["--enable-automation"],
 });
 
 try {

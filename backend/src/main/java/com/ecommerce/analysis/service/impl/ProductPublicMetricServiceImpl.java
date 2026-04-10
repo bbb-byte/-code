@@ -11,6 +11,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.io.BufferedReader;
+import java.io.BufferedWriter;
 import java.io.IOException;
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
@@ -183,6 +184,44 @@ public class ProductPublicMetricServiceImpl implements ProductPublicMetricServic
         }
         int normalizedLimit = limit <= 0 ? 10 : Math.min(limit, 100);
         return productPublicMappingMapper.selectLatestByPlatform(normalizedPlatform, normalizedLimit);
+    }
+
+    @Override
+    public String exportMappingsToCsv(String sourcePlatform, String outputDir) throws IOException {
+        String normalizedPlatform = normalizePlatform(sourcePlatform);
+        if (normalizedPlatform == null) {
+            normalizedPlatform = SUPPORTED_PLATFORM;
+        }
+
+        List<ProductPublicMapping> mappings = productPublicMappingMapper.selectAllByPlatform(normalizedPlatform);
+        Path outputPath = Path.of(outputDir, normalizedPlatform + "_product_public_mapping.runtime.csv");
+        Files.createDirectories(outputPath.getParent());
+
+        try (BufferedWriter writer = Files.newBufferedWriter(outputPath, StandardCharsets.UTF_8)) {
+            writer.write("item_id,source_platform,source_product_id,source_url,mapping_confidence,verification_note,evidence_note");
+            writer.newLine();
+            for (ProductPublicMapping mapping : mappings) {
+                if (mapping == null || mapping.getItemId() == null) {
+                    continue;
+                }
+                writer.write(csv(mapping.getItemId()));
+                writer.write(",");
+                writer.write(csv(defaultIfBlank(mapping.getSourcePlatform(), normalizedPlatform)));
+                writer.write(",");
+                writer.write(csv(mapping.getSourceProductId()));
+                writer.write(",");
+                writer.write(csv(mapping.getSourceUrl()));
+                writer.write(",");
+                writer.write(csv(mapping.getMappingConfidence() == null ? "1.0" : mapping.getMappingConfidence().stripTrailingZeros().toPlainString()));
+                writer.write(",");
+                writer.write(csv(mapping.getVerificationNote()));
+                writer.write(",");
+                writer.write(csv(mapping.getEvidenceNote()));
+                writer.newLine();
+            }
+        }
+
+        return outputPath.toString();
     }
 
     @Override
@@ -369,6 +408,17 @@ public class ProductPublicMetricServiceImpl implements ProductPublicMetricServic
         return abbreviate(builder.toString(), 255);
     }
 
+    private String csv(Object value) {
+        if (value == null) {
+            return "";
+        }
+        String text = String.valueOf(value);
+        if (text.contains("\"") || text.contains(",") || text.contains("\n") || text.contains("\r")) {
+            return "\"" + text.replace("\"", "\"\"") + "\"";
+        }
+        return text;
+    }
+
     private void appendWithSeparator(StringBuilder builder, String value) {
         if (builder.length() > 0) {
             builder.append("; ");
@@ -441,8 +491,9 @@ public class ProductPublicMetricServiceImpl implements ProductPublicMetricServic
         if (decimal == null) {
             return null;
         }
-        if (trimToNull(value) != null && !trimToNull(value).endsWith("%") && decimal.compareTo(BigDecimal.ONE) <= 0) {
-            decimal = decimal.multiply(new BigDecimal("100"));
+        String trimmed = trimToNull(value);
+        if (trimmed != null && trimmed.endsWith("%")) {
+            decimal = decimal.divide(new BigDecimal("100"));
         }
         return decimal;
     }

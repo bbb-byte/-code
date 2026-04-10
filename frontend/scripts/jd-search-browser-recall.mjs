@@ -7,7 +7,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const frontendDir = path.resolve(__dirname, "..");
 const projectRoot = path.resolve(frontendDir, "..");
-const edgePath = "C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe";
+const chromePath = "C:/Program Files/Google/Chrome/Application/chrome.exe";
 
 function parseArgs(argv) {
   const result = {
@@ -17,7 +17,7 @@ function parseArgs(argv) {
     maxProducts: 50,
     storageState: path.join(projectRoot, "crawler", "output", "debug", "jd_browser_storage_state.json"),
     debugDir: path.join(projectRoot, "crawler", "output", "debug"),
-    userDataDir: path.join(frontendDir, ".jd-edge-profile"),
+    userDataDir: path.join(frontendDir, ".jd-chrome-profile"),
     headless: true,
   };
   for (let i = 0; i < argv.length; i += 1) {
@@ -207,9 +207,16 @@ async function main() {
 
   const context = await chromium.launchPersistentContext(userDataDir, {
     headless: args.headless,
-    executablePath: edgePath,
+    executablePath: chromePath,
     viewport: { width: 1440, height: 960 },
     locale: "zh-CN",
+    args: [
+      "--disable-blink-features=AutomationControlled",
+      "--disable-infobars",
+      "--no-first-run",
+      "--no-default-browser-check",
+    ],
+    ignoreDefaultArgs: ["--enable-automation"],
   });
 
   const page = await context.newPage();

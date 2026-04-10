@@ -1,4 +1,4 @@
-requests
+DrissionPage
 pandas
 numpy
 scikit-learn

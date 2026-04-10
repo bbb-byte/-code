@@ -38,6 +38,11 @@ public interface ProductPublicMetricService {
     List<ProductPublicMapping> listLatestMappings(String sourcePlatform, int limit);
 
     /**
+     * 将数据库中的已确认公网映射导出为 crawl 脚本可读的 CSV。
+     */
+    String exportMappingsToCsv(String sourcePlatform, String outputDir) throws IOException;
+
+    /**
      * 撤销指定公网映射，并清理对应快照。
      */
     boolean removeMapping(Long id);

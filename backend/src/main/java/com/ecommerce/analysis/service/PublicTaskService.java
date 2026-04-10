@@ -9,6 +9,8 @@ public interface PublicTaskService {
 
     String startCrawlTask(String mappingPath, String outputDir, String fixtureDir);
 
+    String startAttachedSearchCrawlTask(String candidatePath, String outputPath, String cdpUrl);
+
     String startRecallTask(String productPath, String outputPath, String fixtureDir, String sourceDataPath,
             String generatedProductPath, int topK, int maxProducts);
 

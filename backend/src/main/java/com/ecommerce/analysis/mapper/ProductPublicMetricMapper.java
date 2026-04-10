@@ -47,19 +47,20 @@ public interface ProductPublicMetricMapper extends BaseMapper<ProductPublicMetri
             "CASE WHEN ppm.id IS NULL THEN 0 ELSE 1 END AS has_mapping, " +
             "CASE WHEN pm.id IS NULL THEN 0 ELSE 1 END AS has_public_metric " +
             "FROM (" +
-            "  SELECT item_id, " +
+            "  SELECT ub.item_id, " +
             "         SUM(CASE WHEN behavior_type = 'pv' THEN 1 ELSE 0 END) AS view_count, " +
             "         SUM(CASE WHEN behavior_type = 'buy' THEN 1 ELSE 0 END) AS buy_count " +
-            "  FROM user_behavior " +
+            "  FROM user_behavior ub " +
+            "  LEFT JOIN product_public_metric pm ON ub.item_id = pm.item_id AND pm.source_platform = #{sourcePlatform} " +
             "  WHERE behavior_type IN ('pv', 'buy') " +
-            "  GROUP BY item_id " +
+            "  <if test='onlyWithMetrics'>AND pm.id IS NOT NULL</if> " +
+            "  GROUP BY ub.item_id " +
             "  ORDER BY buy_count DESC, view_count DESC " +
             "  LIMIT #{offset}, #{limit}" +
             ") hot " +
             "LEFT JOIN product p ON hot.item_id = p.item_id " +
             "LEFT JOIN product_public_mapping ppm ON hot.item_id = ppm.item_id AND ppm.source_platform = #{sourcePlatform} " +
             "LEFT JOIN product_public_metric pm ON hot.item_id = pm.item_id AND pm.source_platform = #{sourcePlatform} " +
-            "<if test='onlyWithMetrics'>WHERE pm.id IS NOT NULL</if> " +
             "ORDER BY hot.buy_count DESC, hot.view_count DESC" +
             "</script>")
     List<Map<String, Object>> getHotProductsWithPublicMetrics(@Param("offset") int offset,

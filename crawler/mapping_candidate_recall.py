@@ -3,25 +3,25 @@ import csv
 import re
 import sys
 import time
+import random
+import logging
 from dataclasses import dataclass
 from html import unescape
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional
 from urllib.parse import urljoin
 
-import requests
+from DrissionPage import Chromium, ChromiumOptions
 
 from mapping_scorer import load_products
 
+logger = logging.getLogger(__name__)
 
 JD_SEARCH_URL = "https://search.jd.com/Search"
 DEFAULT_TIMEOUT = 10
 DEFAULT_TOP_K = 5
-DEFAULT_HEADERS = {
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-    "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-}
+DEFAULT_SLEEP_SECONDS = 5.0
+DEFAULT_SLEEP_JITTER = (1.0, 3.0)
 
 
 @dataclass
@@ -41,7 +41,9 @@ class JDCandidateRecall:
         timeout: int = DEFAULT_TIMEOUT,
         fixture_dir: Optional[Path] = None,
         allow_sample_fallback: bool = False,
-        request_delay: float = 0.0,
+        request_delay: float = DEFAULT_SLEEP_SECONDS,
+        browser_path: str = "",
+        headless: bool = False,
     ):
         self.timeout = timeout
         self.fixture_dir = fixture_dir
@@ -50,8 +52,39 @@ class JDCandidateRecall:
         self.shared_sample_hits = 0
         self.risk_page_hits = 0
         self.debug_dir: Optional[Path] = None
-        self._session: Optional[requests.Session] = None
-        self._last_request_at: Optional[float] = None
+        self.browser: Optional[Chromium] = None
+        self.browser_path = browser_path
+        self.headless = headless
+
+    def _init_browser(self) -> None:
+        """初始化 Chrome 浏览器。"""
+        if self.fixture_dir:
+            return
+        co = ChromiumOptions()
+        # 强制使用 Chrome
+        browser = self.browser_path or r"C:\Program Files\Google\Chrome\Application\chrome.exe"
+        co.set_browser_path(browser)
+        # 独立调试端口和用户数据目录，避免冲突
+        co.set_local_port(19222)
+        co.set_user_data_path(str(Path(__file__).resolve().parent / ".chrome_profile"))
+        if self.headless:
+            co.headless()
+        self.browser = Chromium(co)
+        logger.info("Chrome 浏览器已初始化 (%s)", browser)
+
+    def _close_browser(self) -> None:
+        if self.browser:
+            try:
+                self.browser.quit()
+            except Exception:
+                pass
+
+    def _random_sleep(self) -> None:
+        """随机等待，避免固定间隔被检测。"""
+        jitter = random.uniform(*DEFAULT_SLEEP_JITTER)
+        duration = self.request_delay + jitter
+        logger.debug("睡眠 %.1f 秒", duration)
+        time.sleep(duration)
 
     def set_debug_dir(self, debug_dir: Optional[Path]) -> None:
         self.debug_dir = debug_dir
@@ -72,25 +105,6 @@ class JDCandidateRecall:
             return ""
         return parts[-1]
 
-    def get_session(self) -> requests.Session:
-        if self._session is None:
-            session = requests.Session()
-            session.headers.update(DEFAULT_HEADERS)
-            self._session = session
-        return self._session
-
-    def wait_for_request_slot(self) -> None:
-        if self.request_delay <= 0:
-            self._last_request_at = time.monotonic()
-            return
-        now = time.monotonic()
-        if self._last_request_at is not None:
-            remaining = self.request_delay - (now - self._last_request_at)
-            if remaining > 0:
-                time.sleep(remaining)
-                now = now + remaining
-        self._last_request_at = now
-
     def fetch_search_page(self, item_id: int, keyword: str) -> str:
         if self.fixture_dir:
             item_fixture = self.fixture_dir / f"jd_search_{item_id}.html"
@@ -102,15 +116,20 @@ class JDCandidateRecall:
                 self.shared_sample_hits += 1
                 return sample_fixture.read_text(encoding="utf-8")
 
-        self.wait_for_request_slot()
-        response = self.get_session().get(
-            JD_SEARCH_URL,
-            params={"keyword": keyword},
-            headers={"Referer": f"{JD_SEARCH_URL}?keyword={keyword.replace(' ', '+')}"},
-            timeout=self.timeout,
-        )
-        response.raise_for_status()
-        return response.text
+        # 使用真实浏览器访问搜索页
+        tab = self.browser.latest_tab
+        search_url = f"{JD_SEARCH_URL}?keyword={keyword}"
+        tab.get(search_url)
+        tab.wait(3)
+
+        # 等待搜索结果加载
+        try:
+            tab.wait.eles_loaded("#J_goodsList .gl-item", timeout=self.timeout)
+        except Exception:
+            logger.warning("搜索结果未完全加载: %s", keyword)
+
+        html = tab.html
+        return html
 
     def save_debug_html(self, item_id: int, keyword: str, html: str) -> Optional[Path]:
         if not self.debug_dir:
@@ -122,7 +141,13 @@ class JDCandidateRecall:
 
     def is_risk_page(self, html: str) -> bool:
         lowered = (html or "").lower()
-        return "jdr_shields" in lowered or "risk_handler" in lowered or "privatedomain/risk_handler" in lowered
+        return (
+            "jdr_shields" in lowered
+            or "risk_handler" in lowered
+            or "privatedomain/risk_handler" in lowered
+            or "访问频繁" in lowered
+            or "请稍后再试" in lowered
+        )
 
     def parse_search_results(
         self,
@@ -273,10 +298,17 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--top-k", default=DEFAULT_TOP_K, type=int, help="Max candidates kept for each product")
     parser.add_argument("--max-products", default=0, type=int, help="Max number of products to recall; 0 means all")
     parser.add_argument("--timeout", default=DEFAULT_TIMEOUT, type=int, help="HTTP timeout in seconds")
+    parser.add_argument("--browser-path", default="", help="浏览器可执行文件路径")
+    parser.add_argument("--headless", action="store_true", help="无头模式运行")
     return parser
 
 
 def main() -> None:
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
     args = build_parser().parse_args()
     base_dir = Path(__file__).resolve().parent
     products_path = resolve_path(base_dir, args.products)
@@ -293,61 +325,71 @@ def main() -> None:
         timeout=args.timeout,
         fixture_dir=fixture_dir,
         allow_sample_fallback=args.allow_sample_fallback,
+        browser_path=args.browser_path,
+        headless=args.headless,
     )
     recall.set_debug_dir(debug_dir)
+    recall._init_browser()
 
-    rows: List[Dict[str, object]] = []
-    debug_files: List[Path] = []
-    for product in product_list:
-        keyword = recall.build_keyword(product.brand, product.category_name)
-        html = recall.fetch_search_page(product.item_id, keyword)
-        if recall.is_risk_page(html):
-            recall.risk_page_hits += 1
-        candidates = recall.parse_search_results(
-            html=html,
-            brand_hint=product.brand,
-            category_hint=product.category_name,
-            top_k=args.top_k,
-        )
-        if not candidates:
-            debug_path = recall.save_debug_html(product.item_id, keyword, html)
-            if debug_path:
-                debug_files.append(debug_path)
-        for candidate in candidates:
-            rows.append(
-                {
-                    "item_id": product.item_id,
-                    "source_platform": "jd",
-                    "source_product_id": candidate.source_product_id,
-                    "source_url": candidate.source_url,
-                    "public_title": candidate.public_title,
-                    "public_brand": candidate.public_brand,
-                    "public_category": candidate.public_category,
-                    "public_price": "" if candidate.public_price is None else f"{candidate.public_price:.2f}",
-                    "search_keyword": keyword,
-                    "rank": candidate.rank,
-                    "candidate_source": "jd_search",
-                }
+    try:
+        rows: List[Dict[str, object]] = []
+        debug_files: List[Path] = []
+        total = len(product_list)
+        for idx, product in enumerate(product_list, start=1):
+            keyword = recall.build_keyword(product.brand, product.category_name)
+            logger.info("搜索进度 %d/%d — keyword='%s'", idx, total, keyword)
+            html = recall.fetch_search_page(product.item_id, keyword)
+            if recall.is_risk_page(html):
+                recall.risk_page_hits += 1
+                logger.warning("商品 %s 搜索被风控拦截", product.item_id)
+            candidates = recall.parse_search_results(
+                html=html,
+                brand_hint=product.brand,
+                category_hint=product.category_name,
+                top_k=args.top_k,
             )
+            if not candidates:
+                debug_path = recall.save_debug_html(product.item_id, keyword, html)
+                if debug_path:
+                    debug_files.append(debug_path)
+            for candidate in candidates:
+                rows.append(
+                    {
+                        "item_id": product.item_id,
+                        "source_platform": "jd",
+                        "source_product_id": candidate.source_product_id,
+                        "source_url": candidate.source_url,
+                        "public_title": candidate.public_title,
+                        "public_brand": candidate.public_brand,
+                        "public_category": candidate.public_category,
+                        "public_price": "" if candidate.public_price is None else f"{candidate.public_price:.2f}",
+                        "search_keyword": keyword,
+                        "rank": candidate.rank,
+                        "candidate_source": "jd_search",
+                    }
+                )
+            recall._random_sleep()
 
-    write_rows(output_path, rows)
-    print(f"Loaded {len(products)} internal products.")
-    if args.max_products and args.max_products > 0:
-        print(f"Processed first {len(product_list)} products due to max-products limit.")
-    print(f"Wrote {len(rows)} candidate rows.")
-    if recall.shared_sample_hits:
-        print(
-            f"Notice: shared sample search page reused for {recall.shared_sample_hits} items; results are demo-only."
-        )
-    if recall.risk_page_hits:
-        print(f"Risk-handler pages detected for {recall.risk_page_hits} products.")
-    if debug_files:
-        print(f"Saved {len(debug_files)} debug search pages to {debug_dir}")
-    print(f"Candidate file: {output_path}")
-    print("This script only generates candidate rows. Final mapping still requires scoring and human review.")
-    if not rows and recall.risk_page_hits:
-        print("Recall failed because live requests were blocked by the target site's risk-control page.")
-        raise SystemExit(2)
+        write_rows(output_path, rows)
+        print(f"Loaded {len(products)} internal products.")
+        if args.max_products and args.max_products > 0:
+            print(f"Processed first {len(product_list)} products due to max-products limit.")
+        print(f"Wrote {len(rows)} candidate rows.")
+        if recall.shared_sample_hits:
+            print(
+                f"Notice: shared sample search page reused for {recall.shared_sample_hits} items; results are demo-only."
+            )
+        if recall.risk_page_hits:
+            print(f"Risk-handler pages detected for {recall.risk_page_hits} products.")
+        if debug_files:
+            print(f"Saved {len(debug_files)} debug search pages to {debug_dir}")
+        print(f"Candidate file: {output_path}")
+        print("This script only generates candidate rows. Final mapping still requires scoring and human review.")
+        if not rows and recall.risk_page_hits:
+            print("Recall failed because live requests were blocked by the target site's risk-control page.")
+            raise SystemExit(2)
+    finally:
+        recall._close_browser()
 
 
 if __name__ == "__main__":

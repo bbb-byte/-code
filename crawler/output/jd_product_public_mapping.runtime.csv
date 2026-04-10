@@ -1,0 +1,7 @@
+item_id,source_platform,source_product_id,source_url,mapping_confidence,verification_note,evidence_note
+1001588,jd,100302454402,https://item.jd.com/100302454402.html,0.2,"页面工作台确认入库; score=0.2; reason=price,evidence",title=魅蓝魅族弦月 半入耳降噪耳机; brand=魅蓝京东自营旗舰店
+1002098,jd,100251444663,https://item.jd.com/100251444663.html,0.1,页面工作台确认入库; score=0.1; reason=evidence,title=三星照明面板灯600x600平板灯LED集成吊顶灯超薄天花板灯办公室厂房车间嵌入式灯具 经济型48W白光6500K; brand=三星照明工业照明京东自营旗舰店
+1002225,jd,10150948553031,https://item.jd.com/10150948553031.html,0.1,页面工作台确认入库; score=0.1; reason=evidence,title=飞利浦led护眼吸顶灯全光谱客厅大灯餐厅卧室主灯具套餐V9包上门安装 55W 18㎡内适用 4400lm 【V9智能款】; brand=飞利浦灯饰照明旗舰店
+1002524,jd,200099998888,https://item.jd.com/200099998888.html,0.1,页面工作台确认入库; score=0.1; reason=evidence,title=Beauty care lotion; brand=Other Shop
+10000001,jd,10000001,https://item.jd.com/10000001.html,0.85,人工核对商品页与内部品牌/价格相符,示例映射-请替换为真实人工核验结果
+10000002,jd,10000002,https://item.jd.com/10000002.html,0.95,人工复核商品页标题与内部类目一致,示例映射-请替换为真实人工核验结果

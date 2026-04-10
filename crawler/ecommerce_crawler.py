@@ -1,6 +1,8 @@
 import argparse
 import csv
 import json
+import logging
+import random
 import re
 import time
 from dataclasses import dataclass
@@ -8,23 +10,29 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional
 
-import requests
+from DrissionPage import Chromium, ChromiumOptions
+
+logger = logging.getLogger(__name__)
 
 JD_PLATFORM = "jd"
-JD_COMMENT_SUMMARY_URL = "https://club.jd.com/comment/productCommentSummaries.action"
-DEFAULT_TIMEOUT = 10
-DEFAULT_SLEEP_SECONDS = 0.5
-DEFAULT_HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/124.0.0.0 Safari/537.36"
-    ),
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-    "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
-    "Cache-Control": "no-cache",
-    "Pragma": "no-cache",
-}
+JD_COMMENT_SUMMARY_URL = "club.jd.com/comment/productCommentSummaries.action"
+DEFAULT_TIMEOUT = 15
+DEFAULT_SLEEP_SECONDS = 5.0
+DEFAULT_MAX_RETRIES = 3
+DEFAULT_RETRY_BACKOFF_SECONDS = 10.0
+DEFAULT_SLEEP_JITTER = (1.0, 3.0)
+CONSECUTIVE_BLOCK_THRESHOLD = 3
+CONSECUTIVE_BLOCK_PAUSE_SECONDS = 120
+
+# 评论区 CSS 选择器 (京东商品页)
+COMMENT_TAB_SELECTOR = "#detail .tab-main-item:nth-child(5)"
+COMMENT_AREA_SELECTORS = [
+    ".percent-con",
+    ".comment-percent",
+    ".J-comm-score",
+    "#comment-0",
+    ".comment-column",
+]
 
 
 @dataclass
@@ -38,18 +46,98 @@ class MappingRow:
     evidence_note: str
 
 
+class TransientCrawlError(RuntimeError):
+    pass
+
+
 class JDPublicSatisfactionCrawler:
+    """使用 DrissionPage 操控真实浏览器采集京东评价数据。
+
+    核心原理：
+    1. 接管用户已登录的 Chrome/Edge 浏览器（避免登录问题）
+    2. 访问商品页并滚动到评论区（触发 JS 异步加载）
+    3. 监听 club.jd.com 评论 API 的网络响应包来提取数据
+    4. 如果网络监听没拿到，则尝试从 DOM 解析
+    """
+
     def __init__(
         self,
         timeout: int = DEFAULT_TIMEOUT,
         sleep_seconds: float = DEFAULT_SLEEP_SECONDS,
+        max_retries: int = DEFAULT_MAX_RETRIES,
+        retry_backoff_seconds: float = DEFAULT_RETRY_BACKOFF_SECONDS,
         fixture_dir: Optional[Path] = None,
+        headless: bool = False,
+        browser_path: str = "",
     ):
         self.timeout = timeout
         self.sleep_seconds = sleep_seconds
+        self.max_retries = max(0, max_retries)
+        self.retry_backoff_seconds = max(0.0, retry_backoff_seconds)
         self.fixture_dir = fixture_dir
-        self.session = requests.Session()
-        self.session.headers.update(DEFAULT_HEADERS)
+        self._consecutive_blocks = 0
+        self.headless = headless
+        self.browser: Optional[Chromium] = None
+        self.browser_path = browser_path
+
+    # ------------------------------------------------------------------
+    # Browser management
+    # ------------------------------------------------------------------
+
+    def _init_browser(self) -> None:
+        """初始化浏览器，强制使用 Chrome 并用独立调试端口。"""
+        if self.fixture_dir:
+            return
+        co = ChromiumOptions()
+        # 强制使用 Chrome
+        browser = self.browser_path or r"C:\Program Files\Google\Chrome\Application\chrome.exe"
+        co.set_browser_path(browser)
+        # 用固定调试端口，避免 auto_port 连到已有的 Edge 上
+        co.set_local_port(19222)
+        # 使用独立的用户数据目录，避免和正在用的 Chrome 冲突
+        co.set_user_data_path(str(Path(__file__).resolve().parent / ".chrome_profile"))
+        if self.headless:
+            co.headless()
+        self.browser = Chromium(co)
+        logger.info("Chrome 浏览器已初始化 (%s)", browser)
+
+    def _close_browser(self) -> None:
+        if self.browser:
+            try:
+                self.browser.quit()
+            except Exception:
+                pass
+
+    # ------------------------------------------------------------------
+    # Anti-detection helpers
+    # ------------------------------------------------------------------
+
+    def _random_sleep(self) -> None:
+        """在基础等待时间上叠加随机抖动，避免固定间隔被检测。"""
+        jitter = random.uniform(*DEFAULT_SLEEP_JITTER)
+        duration = self.sleep_seconds + jitter
+        logger.debug("睡眠 %.1f 秒", duration)
+        time.sleep(duration)
+
+    def _on_block_detected(self) -> None:
+        """记录连续拦截次数，达到阈值时自动暂停。"""
+        self._consecutive_blocks += 1
+        if self._consecutive_blocks >= CONSECUTIVE_BLOCK_THRESHOLD:
+            logger.warning(
+                "连续被拦截 %d 次，自动暂停 %d 秒",
+                self._consecutive_blocks,
+                CONSECUTIVE_BLOCK_PAUSE_SECONDS,
+            )
+            time.sleep(CONSECUTIVE_BLOCK_PAUSE_SECONDS)
+            self._consecutive_blocks = 0
+
+    def _on_success(self) -> None:
+        """成功采集后重置连续拦截计数。"""
+        self._consecutive_blocks = 0
+
+    # ------------------------------------------------------------------
+    # CSV loading & validation
+    # ------------------------------------------------------------------
 
     def load_mapping_rows(self, path: Path) -> List[MappingRow]:
         rows: List[MappingRow] = []
@@ -108,6 +196,10 @@ class JDPublicSatisfactionCrawler:
         match = re.search(r"/(\d+)\.html", source_url)
         return match.group(1) if match else ""
 
+    # ------------------------------------------------------------------
+    # Data fetching via real browser
+    # ------------------------------------------------------------------
+
     def parse_summary_payload(self, text: str) -> List[Dict[str, object]]:
         payload = json.loads(text)
         if isinstance(payload, list):
@@ -117,54 +209,96 @@ class JDPublicSatisfactionCrawler:
             return summaries
         return [summaries]
 
-    def fetch_comment_summary(self, row: MappingRow) -> Dict[str, object]:
-        if self.fixture_dir:
-            fixture_path = self.fixture_dir / f"{row.source_product_id}.json"
-            if fixture_path.exists():
-                return self.parse_summary_payload(fixture_path.read_text(encoding="utf-8"))[0]
-
-            sample_json = self.fixture_dir / "jd_comment_summary.sample.json"
-            if sample_json.exists():
-                return self.parse_summary_payload(sample_json.read_text(encoding="utf-8"))[0]
-
-        response = self.session.get(
-            JD_COMMENT_SUMMARY_URL,
-            params={"referenceIds": row.source_product_id},
-            headers={"Referer": row.source_url},
-            timeout=self.timeout,
-        )
-        response.raise_for_status()
-        payload = self.parse_jsonp(response.text)
-        summaries = payload.get("CommentsCount") or payload.get("productCommentSummaries") or payload.get("productCommentSummary") or []
-        if isinstance(summaries, list) and summaries:
-            return summaries[0]
-        return {}
-
-    def fetch_product_page(self, row: MappingRow) -> str:
-        if self.fixture_dir:
-            html_path = self.fixture_dir / f"{row.source_product_id}.html"
-            if html_path.exists():
-                return html_path.read_text(encoding="utf-8")
-
-            sample_html = self.fixture_dir / "jd_product_page.sample.html"
-            if sample_html.exists():
-                return sample_html.read_text(encoding="utf-8")
-
-        response = self.session.get(
-            row.source_url,
-            timeout=self.timeout,
-        )
-        response.raise_for_status()
-        return response.text
-
-    def parse_jsonp(self, text: str) -> Dict[str, object]:
+    def _parse_jsonp(self, text: str) -> Dict[str, object]:
+        """解析 JSONP 或 JSON 响应。"""
         raw = text.strip()
         if raw.startswith("{"):
             return json.loads(raw)
         match = re.search(r"\((.*)\)\s*;?\s*$", raw)
-        if not match:
-            raise ValueError("无法解析京东评价摘要响应")
-        return json.loads(match.group(1))
+        if match:
+            return json.loads(match.group(1))
+        return json.loads(raw)
+
+    def fetch_comment_summary_via_browser(self, row: MappingRow) -> Dict[str, object]:
+        """通过真实浏览器访问商品页，监听评论 API 响应来获取数据。"""
+        if self.fixture_dir:
+            fixture_path = self.fixture_dir / f"{row.source_product_id}.json"
+            if fixture_path.exists():
+                return self.parse_summary_payload(fixture_path.read_text(encoding="utf-8"))[0]
+            sample_json = self.fixture_dir / "jd_comment_summary.sample.json"
+            if sample_json.exists():
+                return self.parse_summary_payload(sample_json.read_text(encoding="utf-8"))[0]
+
+        tab = self.browser.latest_tab
+
+        # 开始监听评论 API 的网络响应
+        tab.listen.start(JD_COMMENT_SUMMARY_URL)
+
+        # 访问商品页
+        tab.get(row.source_url)
+        tab.wait(2)
+
+        # 滚动到评论区以触发异步加载
+        tab.run_js("document.getElementById('comment') && document.getElementById('comment').scrollIntoView()")
+        tab.wait(1)
+
+        # 等待并捕获评论 API 响应（最多等 15 秒）
+        summary = {}
+        try:
+            packet = tab.listen.wait(timeout=self.timeout)
+            if packet and packet.response and packet.response.body:
+                body = packet.response.body
+                if isinstance(body, bytes):
+                    body = body.decode("utf-8", errors="replace")
+                try:
+                    payload = self._parse_jsonp(body)
+                    summaries = payload.get("CommentsCount") or payload.get("productCommentSummaries") or payload.get("productCommentSummary") or []
+                    if isinstance(summaries, list) and summaries:
+                        summary = summaries[0]
+                        logger.info("通过网络监听获取到评论摘要")
+                except (json.JSONDecodeError, ValueError) as e:
+                    logger.warning("解析评论 API 响应失败: %s", e)
+        except Exception as e:
+            logger.warning("未捕获到评论 API 响应: %s", e)
+        finally:
+            tab.listen.stop()
+
+        # 如果网络监听没拿到，尝试从 DOM 解析
+        if not summary:
+            summary = self._extract_from_dom(tab)
+
+        return summary
+
+    def _extract_from_dom(self, tab) -> Dict[str, object]:
+        """从 DOM 解析评论数据（作为网络监听的备用方案）。"""
+        summary = {}
+        html = tab.html
+
+        # 好评率
+        match = re.search(r"好评率[：:\s]*([0-9]+(?:\.[0-9]+)?)%", html)
+        if match:
+            summary["goodRateShow"] = float(match.group(1))
+
+        # 评论数
+        match = re.search(r"(\d[\d,]*)\s*条?评", html)
+        if match:
+            count_str = match.group(1).replace(",", "")
+            summary["commentCount"] = int(count_str)
+
+        # 好评/中评/差评数
+        for label, key in [("好评", "goodCount"), ("中评", "generalCount"), ("差评", "poorCount")]:
+            match = re.search(rf"{label}\s*[（(]?\s*(\d[\d,]*)\s*[）)]?", html)
+            if match:
+                summary[key] = int(match.group(1).replace(",", ""))
+
+        if summary:
+            logger.info("从 DOM 解析出评论数据: %s", list(summary.keys()))
+
+        return summary
+
+    # ------------------------------------------------------------------
+    # Metrics extraction
+    # ------------------------------------------------------------------
 
     def extract_metrics(self, summary: Dict[str, object], html: str) -> Dict[str, object]:
         positive_rate = self.extract_positive_rate(summary, html)
@@ -238,6 +372,27 @@ class JDPublicSatisfactionCrawler:
         except ValueError:
             return None
 
+    def is_transient_blocked_response(self, text: str) -> bool:
+        raw = (text or "").strip()
+        if not raw:
+            return True
+        block_markers = [
+            "系统繁忙",
+            "访问过于频繁",
+            "请求过于频繁",
+            "请稍后再试",
+            "安全验证",
+            "验证码",
+        ]
+        lower_raw = raw.lower()
+        if raw.startswith("<!doctype html") or raw.startswith("<html"):
+            return True
+        return any(marker in raw for marker in block_markers) or "forbidden" in lower_raw
+
+    # ------------------------------------------------------------------
+    # Output normalization
+    # ------------------------------------------------------------------
+
     def normalize_row(self, row: MappingRow, metrics: Dict[str, object], raw_summary: Dict[str, object], crawl_status: str) -> Dict[str, object]:
         return {
             "item_id": row.item_id,
@@ -253,16 +408,47 @@ class JDPublicSatisfactionCrawler:
             "crawled_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
         }
 
+    # ------------------------------------------------------------------
+    # Main crawl loop
+    # ------------------------------------------------------------------
+
     def crawl(self, mapping_path: Path) -> List[Dict[str, object]]:
+        self._init_browser()
+        try:
+            return self._crawl_loop(mapping_path)
+        finally:
+            self._close_browser()
+
+    def _crawl_loop(self, mapping_path: Path) -> List[Dict[str, object]]:
         results: List[Dict[str, object]] = []
-        for row in self.load_mapping_rows(mapping_path):
+        rows = self.load_mapping_rows(mapping_path)
+        total = len(rows)
+        for idx, row in enumerate(rows, start=1):
+            logger.info("采集进度 %d/%d — item_id=%s", idx, total, row.item_id)
             try:
-                summary = self.fetch_comment_summary(row)
-                html = self.fetch_product_page(row)
-                metrics = self.extract_metrics(summary, html)
+                summary = self.fetch_comment_summary_via_browser(row)
+                metrics = self.extract_metrics(summary, "")
                 crawl_status = "success" if any(metrics.values()) else "empty"
                 results.append(self.normalize_row(row, metrics, summary, crawl_status))
+                self._on_success()
+            except TransientCrawlError as exc:
+                logger.warning("商品 %s 采集被拦截: %s", row.source_product_id, exc)
+                self._on_block_detected()
+                results.append({
+                    "item_id": row.item_id,
+                    "source_platform": row.source_platform,
+                    "source_product_id": row.source_product_id,
+                    "source_url": row.source_url,
+                    "positive_rate": None,
+                    "review_count": None,
+                    "shop_score": None,
+                    "rating_text": None,
+                    "crawl_status": "blocked",
+                    "raw_payload": json.dumps({"error": str(exc)}, ensure_ascii=False),
+                    "crawled_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+                })
             except Exception as exc:
+                logger.error("商品 %s 采集失败: %s", row.source_product_id, exc)
                 results.append({
                     "item_id": row.item_id,
                     "source_platform": row.source_platform,
@@ -276,7 +462,7 @@ class JDPublicSatisfactionCrawler:
                     "raw_payload": json.dumps({"error": str(exc)}, ensure_ascii=False),
                     "crawled_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
                 })
-            time.sleep(self.sleep_seconds)
+            self._random_sleep()
         return results
 
 
@@ -305,12 +491,16 @@ def write_json(path: Path, rows: List[Dict[str, object]]) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="京东商品公网满意度指标采集脚本")
+    parser = argparse.ArgumentParser(description="京东商品公网满意度指标采集脚本（真实浏览器模式）")
     parser.add_argument("--mapping", default="mappings/product_public_mapping.jd.sample.csv", help="映射 CSV 路径")
     parser.add_argument("--output-dir", default="output", help="输出目录")
     parser.add_argument("--fixture-dir", default="", help="本地夹具目录，用于离线验证解析逻辑")
-    parser.add_argument("--timeout", default=DEFAULT_TIMEOUT, type=int, help="HTTP 超时时间(秒)")
-    parser.add_argument("--sleep-seconds", default=DEFAULT_SLEEP_SECONDS, type=float, help="每次请求之间的等待时间")
+    parser.add_argument("--timeout", default=DEFAULT_TIMEOUT, type=int, help="页面加载超时时间(秒)")
+    parser.add_argument("--sleep-seconds", default=DEFAULT_SLEEP_SECONDS, type=float, help="每次请求之间的基础等待时间")
+    parser.add_argument("--max-retries", default=DEFAULT_MAX_RETRIES, type=int, help="临时拦截时的最大重试次数")
+    parser.add_argument("--retry-backoff-seconds", default=DEFAULT_RETRY_BACKOFF_SECONDS, type=float, help="每次重试前的退避基础秒数")
+    parser.add_argument("--headless", action="store_true", help="无头模式运行（不显示浏览器窗口）")
+    parser.add_argument("--browser-path", default="", help="浏览器可执行文件路径")
     return parser
 
 
@@ -324,6 +514,11 @@ def resolve_path(base_dir: Path, raw_path: str) -> Path:
 
 
 def main() -> None:
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
     args = build_parser().parse_args()
     base_dir = Path(__file__).resolve().parent
     mapping_path = resolve_path(base_dir, args.mapping)
@@ -334,7 +529,11 @@ def main() -> None:
     crawler = JDPublicSatisfactionCrawler(
         timeout=args.timeout,
         sleep_seconds=args.sleep_seconds,
+        max_retries=args.max_retries,
+        retry_backoff_seconds=args.retry_backoff_seconds,
         fixture_dir=fixture_dir,
+        headless=args.headless,
+        browser_path=args.browser_path,
     )
     rows = crawler.crawl(mapping_path)
 
@@ -343,7 +542,11 @@ def main() -> None:
     write_csv(csv_path, rows)
     write_json(json_path, rows)
 
+    success = sum(1 for r in rows if r["crawl_status"] == "success")
+    blocked = sum(1 for r in rows if r["crawl_status"] == "blocked")
+    failed = sum(1 for r in rows if r["crawl_status"] in ("failed", "empty"))
     print(f"共采集 {len(rows)} 条商品公网满意度指标记录。")
+    print(f"  成功: {success}  被拦截: {blocked}  失败/空: {failed}")
     print(f"CSV 输出: {csv_path}")
     print(f"JSON 输出: {json_path}")
     print("说明：该脚本只采集京东商品公开评价摘要，不生成用户级 buy/fav/cart/pv 行为。")

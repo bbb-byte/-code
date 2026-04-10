@@ -1,0 +1,28 @@
+[
+  {
+    "item_id": 1001588,
+    "source_platform": "jd",
+    "source_product_id": "10192521777683",
+    "source_url": "https://item.jd.com/10192521777683.html",
+    "positive_rate": null,
+    "review_count": null,
+    "shop_score": null,
+    "rating_text": null,
+    "crawl_status": "failed",
+    "raw_payload": "{\"error\": \"无法解析京东评价摘要响应\"}",
+    "crawled_at": "2026-04-10T12:11:04Z"
+  },
+  {
+    "item_id": 1002098,
+    "source_platform": "jd",
+    "source_product_id": "10215516579046",
+    "source_url": "https://item.jd.com/10215516579046.html",
+    "positive_rate": null,
+    "review_count": null,
+    "shop_score": null,
+    "rating_text": null,
+    "crawl_status": "failed",
+    "raw_payload": "{\"error\": \"无法解析京东评价摘要响应\"}",
+    "crawled_at": "2026-04-10T12:11:07Z"
+  }
+]

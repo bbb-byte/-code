@@ -1,0 +1,15 @@
+[
+  {
+    "item_id": "1001588",
+    "source_platform": "jd",
+    "source_product_id": "10192521777683",
+    "source_url": "https://item.jd.com/10192521777683.html",
+    "positive_rate": "",
+    "review_count": "",
+    "shop_score": "",
+    "rating_text": "",
+    "crawl_status": "empty",
+    "raw_payload": "{\"extracted_from\":\"browser_product_page\",\"html_length\":387086,\"title\":\"京东(JD.COM)-正品低价、品质保障、配送及时、轻松购物！\"}",
+    "crawled_at": "2026-04-10T12:18:12Z"
+  }
+]

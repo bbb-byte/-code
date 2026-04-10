@@ -3,6 +3,7 @@ package com.ecommerce.analysis.service.impl;
 import com.ecommerce.analysis.mapper.ProductPublicMetricMapper;
 import com.ecommerce.analysis.mapper.UserBehaviorMapper;
 import com.ecommerce.analysis.mapper.UserProfileMapper;
+import com.ecommerce.analysis.vo.HotProductsPublicMetricsPageVO;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.util.ReflectionTestUtils;
 
@@ -24,6 +25,7 @@ class UserBehaviorServiceImplTest {
         UserBehaviorMapper userBehaviorMapper = mock(UserBehaviorMapper.class);
         UserProfileMapper userProfileMapper = mock(UserProfileMapper.class);
         ProductPublicMetricMapper productPublicMetricMapper = mock(ProductPublicMetricMapper.class);
+        AnalysisCacheService analysisCacheService = mock(AnalysisCacheService.class);
 
         Map<String, Object> first = new HashMap<>();
         first.put("item_id", 44600062L);
@@ -39,20 +41,36 @@ class UserBehaviorServiceImplTest {
         second.put("review_count", null);
         second.put("source_platform", null);
 
-        when(productPublicMetricMapper.getHotProductsWithPublicMetrics(5, "jd"))
-                .thenReturn(Arrays.asList(first, second));
+        HotProductsPublicMetricsPageVO page = new HotProductsPublicMetricsPageVO();
+        page.setPage(1);
+        page.setPageSize(5);
+        page.setTotal(2);
+        page.setRows(Arrays.asList(first, second));
+
+        when(analysisCacheService.getOrLoad(
+                org.mockito.ArgumentMatchers.eq("analysis:hot-products:public-metrics:jd:false:1:5"),
+                org.mockito.ArgumentMatchers.eq(10L),
+                org.mockito.ArgumentMatchers.eq(HotProductsPublicMetricsPageVO.class),
+                org.mockito.ArgumentMatchers.any()))
+                .thenReturn(page);
 
         UserBehaviorServiceImpl service = new UserBehaviorServiceImpl();
         ReflectionTestUtils.setField(service, "userBehaviorMapper", userBehaviorMapper);
         ReflectionTestUtils.setField(service, "userProfileMapper", userProfileMapper);
         ReflectionTestUtils.setField(service, "productPublicMetricMapper", productPublicMetricMapper);
+        ReflectionTestUtils.setField(service, "analysisCacheService", analysisCacheService);
 
-        List<Map<String, Object>> result = service.getHotProductsWithPublicMetrics(5);
+        HotProductsPublicMetricsPageVO result = service.getHotProductsWithPublicMetrics(1, 5, false);
 
-        assertEquals(2, result.size());
-        assertEquals(44600062L, result.get(0).get("item_id"));
-        assertEquals(new BigDecimal("0.9830"), result.get(0).get("positive_rate"));
-        assertEquals(null, result.get(1).get("source_platform"));
-        verify(productPublicMetricMapper).getHotProductsWithPublicMetrics(5, "jd");
+        assertEquals(2, result.getRows().size());
+        assertEquals(2L, result.getTotal());
+        assertEquals(44600062L, result.getRows().get(0).get("item_id"));
+        assertEquals(new BigDecimal("0.9830"), result.getRows().get(0).get("positive_rate"));
+        assertEquals(null, result.getRows().get(1).get("source_platform"));
+        verify(analysisCacheService).getOrLoad(
+                org.mockito.ArgumentMatchers.eq("analysis:hot-products:public-metrics:jd:false:1:5"),
+                org.mockito.ArgumentMatchers.eq(10L),
+                org.mockito.ArgumentMatchers.eq(HotProductsPublicMetricsPageVO.class),
+                org.mockito.ArgumentMatchers.any());
     }
 }

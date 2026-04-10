@@ -48,6 +48,13 @@ public class PublicTaskServiceImpl implements PublicTaskService {
     }
 
     @Override
+    public String startAttachedSearchCrawlTask(String candidatePath, String outputPath, String cdpUrl) {
+        String taskId = createTask("crawl_attached_search", "附着搜索页公网指标采集任务已启动");
+        taskExecutor.execute(() -> runAttachedSearchCrawlTask(taskId, candidatePath, outputPath, cdpUrl));
+        return taskId;
+    }
+
+    @Override
     public String startRecallTask(String productPath, String outputPath, String fixtureDir, String sourceDataPath,
             String generatedProductPath, int topK, int maxProducts) {
         String taskId = createTask("recall", "公网映射候选召回任务已启动");
@@ -97,20 +104,29 @@ public class PublicTaskServiceImpl implements PublicTaskService {
         try {
             String workDir = resolveWorkDir();
             String crawlerPath = workDir + "/crawler/ecommerce_crawler.py";
-            String resolvedMappingPath = resolveWorkspacePath(mappingPath);
             String resolvedOutputDir = resolveWorkspacePath(outputDir);
-            String resolvedFixtureDir = resolveWorkspacePath(fixtureDir);
+            String resolvedFixtureDir = fixtureDir == null || fixtureDir.trim().isEmpty()
+                    ? ""
+                    : resolveWorkspacePath(fixtureDir);
+            String resolvedMappingPath = mappingPath == null || mappingPath.trim().isEmpty()
+                    ? productPublicMetricService.exportMappingsToCsv("jd", resolvedOutputDir)
+                    : resolveWorkspacePath(mappingPath);
             String outputJsonFile = resolvedOutputDir + "/jd_product_public_metrics.json";
             String outputFile = resolvedOutputDir + "/jd_product_public_metrics.csv";
 
             updateProgress(status, 10D, "开始执行公网满意度采集脚本");
+            List<String> crawlArgs = new ArrayList<>(Arrays.asList(
+                    "--mapping", resolvedMappingPath,
+                    "--output-dir", resolvedOutputDir,
+                    "--sleep-seconds", "0"));
+            if (!resolvedFixtureDir.isEmpty()) {
+                crawlArgs.add("--fixture-dir");
+                crawlArgs.add(resolvedFixtureDir);
+            }
             ScriptExecution scriptExecution = runPythonScript(
                     workDir,
                     crawlerPath,
-                    "--mapping", resolvedMappingPath,
-                    "--output-dir", resolvedOutputDir,
-                    "--fixture-dir", resolvedFixtureDir,
-                    "--sleep-seconds", "0");
+                    crawlArgs.toArray(new String[0]));
             status.setLog(scriptExecution.output);
             if (scriptExecution.exitCode != 0) {
                 failTask(status, "爬虫执行失败: " + scriptExecution.output);
@@ -170,31 +186,16 @@ public class PublicTaskServiceImpl implements PublicTaskService {
             }
 
             updateProgress(status, 60D, "开始召回公网候选商品");
-            ScriptExecution scriptExecution;
-            boolean useBrowserRecall = shouldUseBrowserRecall(workDir, resolvedFixtureDir);
-            if (useBrowserRecall) {
-                String frontendDir = workDir + "/frontend";
-                String browserScriptPath = frontendDir + "/scripts/jd-search-browser-recall.mjs";
-                scriptExecution = runNodeScript(
-                        frontendDir,
-                        browserScriptPath,
-                        "--products", toWorkspaceRelative(workDir, effectiveProductPath),
-                        "--output", toWorkspaceRelative(workDir, resolvedOutputPath),
-                        "--top-k", String.valueOf(topK),
-                        "--max-products", String.valueOf(maxProducts),
-                        "--headless", "false");
-            } else {
-                List<String> args = new ArrayList<>(Arrays.asList(
-                        "--products", effectiveProductPath,
-                        "--output", resolvedOutputPath,
-                        "--top-k", String.valueOf(topK),
-                        "--max-products", String.valueOf(maxProducts)));
-                if (resolvedFixtureDir != null && !resolvedFixtureDir.trim().isEmpty()) {
-                    args.add("--fixture-dir");
-                    args.add(resolvedFixtureDir);
-                }
-                scriptExecution = runPythonScript(workDir, scriptPath, args.toArray(new String[0]));
+            List<String> args = new ArrayList<>(Arrays.asList(
+                    "--products", effectiveProductPath,
+                    "--output", resolvedOutputPath,
+                    "--top-k", String.valueOf(topK),
+                    "--max-products", String.valueOf(maxProducts)));
+            if (resolvedFixtureDir != null && !resolvedFixtureDir.trim().isEmpty()) {
+                args.add("--fixture-dir");
+                args.add(resolvedFixtureDir);
             }
+            ScriptExecution scriptExecution = runPythonScript(workDir, scriptPath, args.toArray(new String[0]));
             status.setLog(mergeLogs(status.getLog(), scriptExecution.output));
             if (scriptExecution.exitCode != 0) {
                 failTask(status, "候选召回失败: " + scriptExecution.output);
@@ -216,7 +217,7 @@ public class PublicTaskServiceImpl implements PublicTaskService {
             result.put("topK", topK);
             result.put("maxProducts", maxProducts);
             result.put("candidateRows", candidateRows);
-            result.put("recallMode", useBrowserRecall ? "jd_browser_search" : "jd_search");
+            result.put("recallMode", "jd_search");
             completeTask(status, "公网映射候选召回完成", result);
         } catch (Exception e) {
             log.error("公网映射候选召回任务异常", e);
@@ -258,6 +259,54 @@ public class PublicTaskServiceImpl implements PublicTaskService {
         } catch (Exception e) {
             log.error("公网映射评分任务异常", e);
             failTask(status, "执行映射评分异常: " + e.getMessage());
+        }
+    }
+
+    private void runAttachedSearchCrawlTask(String taskId, String candidatePath, String outputPath, String cdpUrl) {
+        PublicTaskStatusVO status = tasks.get(taskId);
+        try {
+            String workDir = resolveWorkDir();
+            String frontendDir = workDir + "/frontend";
+            String scriptPath = frontendDir + "/scripts/jd-search-browser-metrics.mjs";
+            String resolvedCandidatePath = resolveWorkspacePath(candidatePath);
+            String resolvedOutputPath = resolveWorkspacePath(outputPath);
+
+            updateProgress(status, 15D, "开始附着当前已打开京东搜索页");
+            ScriptExecution scriptExecution = runNodeScript(
+                    frontendDir,
+                    scriptPath,
+                    "--candidates", toWorkspaceRelative(workDir, resolvedCandidatePath),
+                    "--output", toWorkspaceRelative(workDir, resolvedOutputPath),
+                    "--max-products", "1",
+                    "--cdp-url", defaultIfBlank(cdpUrl, "http://127.0.0.1:9222"),
+                    "--use-current-page", "true");
+            status.setLog(scriptExecution.output);
+            if (scriptExecution.exitCode != 0) {
+                failTask(status, "附着搜索页采集失败: " + scriptExecution.output);
+                return;
+            }
+
+            long metricRows = countDataRows(resolvedOutputPath);
+            if (metricRows <= 0) {
+                failTask(status, "附着搜索页采集未产出有效数据");
+                return;
+            }
+
+            int importedRows = productPublicMetricService.importLatestMetricsFromCsv(resolvedOutputPath);
+            Map<String, Object> result = new HashMap<>();
+            result.put("candidateFile", resolvedCandidatePath);
+            result.put("outputFile", resolvedOutputPath);
+            result.put("targetPlatform", "jd");
+            result.put("importedRows", importedRows);
+            result.put("metricRows", metricRows);
+            completeTask(status, "附着搜索页公网指标采集完成", result);
+        } catch (Exception e) {
+            if (isPublicMetricSchemaMissing(e)) {
+                failTask(status, "公网满意度相关数据表不存在，请先执行 backend/src/main/resources/sql/upgrade_archive_dataset.sql 或重新初始化数据库");
+                return;
+            }
+            log.error("附着搜索页公网指标采集任务异常", e);
+            failTask(status, "执行附着搜索页公网指标采集异常: " + e.getMessage());
         }
     }
 
@@ -310,6 +359,13 @@ public class PublicTaskServiceImpl implements PublicTaskService {
             pythonCmd = "python";
         }
         return pythonCmd;
+    }
+
+    private String defaultIfBlank(String value, String fallback) {
+        if (value == null || value.trim().isEmpty()) {
+            return fallback;
+        }
+        return value;
     }
 
     private ScriptExecution runPythonScript(String workDir, String scriptPath, String... args)
@@ -409,14 +465,6 @@ public class PublicTaskServiceImpl implements PublicTaskService {
         return false;
     }
 
-    private boolean shouldUseBrowserRecall(String workDir, String fixtureDir) {
-        if (fixtureDir != null && !fixtureDir.trim().isEmpty()) {
-            return false;
-        }
-        File profileDir = new File(workDir, "frontend/.jd-edge-profile");
-        File browserScript = new File(workDir, "frontend/scripts/jd-search-browser-recall.mjs");
-        return profileDir.exists() && browserScript.exists();
-    }
 
     private String toWorkspaceRelative(String workDir, String absolutePath) {
         if (absolutePath == null || absolutePath.trim().isEmpty()) {

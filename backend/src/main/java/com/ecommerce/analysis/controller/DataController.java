@@ -95,14 +95,27 @@ public class DataController {
     @ApiOperation("执行数据爬取")
     @PostMapping("/crawl")
     public Result<Map<String, Object>> crawlData(
-            @RequestParam(defaultValue = "crawler/mappings/product_public_mapping.jd.sample.csv") String mappingPath,
+            @RequestParam(defaultValue = "") String mappingPath,
             @RequestParam(defaultValue = "crawler/output") String outputDir,
-            @RequestParam(defaultValue = "crawler/fixtures") String fixtureDir) {
+            @RequestParam(defaultValue = "") String fixtureDir) {
         String taskId = publicTaskService.startCrawlTask(mappingPath, outputDir, fixtureDir);
         Map<String, Object> result = new HashMap<>();
         result.put("taskId", taskId);
         result.put("status", "running");
         return Result.success("公网满意度采集任务已启动", result);
+    }
+
+    @ApiOperation("附着当前已打开京东搜索页采集公网指标")
+    @PostMapping("/crawl-attached-search")
+    public Result<Map<String, Object>> crawlAttachedSearchData(
+            @RequestParam(defaultValue = "crawler/output/recalled_candidates.browser.csv") String candidatePath,
+            @RequestParam(defaultValue = "crawler/output/jd_search_browser_metrics_attached.csv") String outputPath,
+            @RequestParam(defaultValue = "http://127.0.0.1:9222") String cdpUrl) {
+        String taskId = publicTaskService.startAttachedSearchCrawlTask(candidatePath, outputPath, cdpUrl);
+        Map<String, Object> result = new HashMap<>();
+        result.put("taskId", taskId);
+        result.put("status", "running");
+        return Result.success("附着搜索页公网指标采集任务已启动", result);
     }
 
     @ApiOperation("召回公网映射候选商品")

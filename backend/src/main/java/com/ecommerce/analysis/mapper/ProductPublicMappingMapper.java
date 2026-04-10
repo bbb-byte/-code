@@ -40,4 +40,9 @@ public interface ProductPublicMappingMapper extends BaseMapper<ProductPublicMapp
             "ORDER BY COALESCE(verified_at, update_time, create_time) DESC, id DESC " +
             "LIMIT #{limit}")
     List<ProductPublicMapping> selectLatestByPlatform(@Param("sourcePlatform") String sourcePlatform, @Param("limit") int limit);
+
+    @Select("SELECT * FROM product_public_mapping " +
+            "WHERE source_platform = #{sourcePlatform} " +
+            "ORDER BY item_id ASC, id ASC")
+    List<ProductPublicMapping> selectAllByPlatform(@Param("sourcePlatform") String sourcePlatform);
 }
