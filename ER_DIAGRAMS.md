@@ -6,7 +6,7 @@
 
 ## 一、系统整体 ER 图
 
-下图为推荐展示版，避免 Mermaid 自动布局时关系文字被实体框遮挡。
+下图为推荐展示版，已按当前数据库结构补齐 archive 数据集升级后的字段，以及新增的公网商品映射、口碑指标扩展表。
 
 ![系统整体 ER 图](./database-er.png)
 
@@ -19,6 +19,9 @@ erDiagram
     user_behavior }o--|| product : "统计来源"
     user_behavior }o--|| category : "统计来源"
     product }o--|| category : "所属类目"
+    product ||--o{ product_public_mapping : "公网映射"
+    product ||--o{ product_public_metric : "抓取指标"
+    product_public_mapping ||--|| product_public_metric : "同源商品"
 
     sys_user {
         bigint id PK
@@ -26,6 +29,7 @@ erDiagram
         varchar password
         varchar role
         tinyint status
+        tinyint deleted
     }
 
     sys_log {
@@ -59,7 +63,10 @@ erDiagram
     product {
         bigint id PK
         bigint item_id UK
+        varchar brand
         bigint category_id FK
+        varchar category_name
+        decimal price
         int view_count
         int buy_count
     }
@@ -76,6 +83,29 @@ erDiagram
         varchar cache_key UK
         longtext cache_value
         datetime expire_time
+    }
+
+    product_public_mapping {
+        bigint id PK
+        bigint item_id FK
+        varchar source_platform UK
+        varchar source_product_id UK
+        varchar verified_title
+        decimal mapping_confidence
+        varchar verification_note
+        datetime verified_at
+    }
+
+    product_public_metric {
+        bigint id PK
+        bigint item_id FK
+        varchar source_platform UK
+        varchar source_product_id
+        decimal positive_rate
+        bigint review_count
+        decimal shop_score
+        varchar crawl_status
+        datetime crawled_at
     }
 ```
 
@@ -188,7 +218,53 @@ erDiagram
 
 ---
 
-## 五、数据表汇总
+## 五、公网商品映射与口碑指标模块
+
+```mermaid
+erDiagram
+    product ||--o{ product_public_mapping : "公网商品映射"
+    product ||--o{ product_public_metric : "抓取口碑指标"
+    product_public_mapping ||--|| product_public_metric : "同平台同商品"
+
+    product {
+        bigint id PK
+        bigint item_id UK "站内商品ID"
+        varchar name "站内商品名称"
+        varchar brand "品牌"
+        varchar category_name "类目名称"
+        decimal price "站内价格"
+    }
+
+    product_public_mapping {
+        bigint id PK
+        bigint item_id FK "站内商品ID"
+        varchar source_platform "外部平台"
+        varchar source_product_id "外部商品ID"
+        varchar source_url "外部商品URL"
+        varchar verified_title "核验后的公网商品标题"
+        decimal mapping_confidence "映射置信度"
+        varchar verification_note "核验说明"
+        varchar evidence_note "证据说明"
+        datetime verified_at "核验时间"
+    }
+
+    product_public_metric {
+        bigint id PK
+        bigint item_id FK "站内商品ID"
+        varchar source_platform "外部平台"
+        varchar source_product_id "外部商品ID"
+        decimal positive_rate "好评率"
+        bigint review_count "评论量"
+        decimal shop_score "店铺评分"
+        varchar rating_text "评分文案"
+        varchar crawl_status "抓取状态"
+        datetime crawled_at "抓取时间"
+    }
+```
+
+---
+
+## 六、数据表汇总
 
 | 序号 | 表名 | 说明 | 核心字段 |
 |:---:|:---|:---|:---|
@@ -196,13 +272,15 @@ erDiagram
 | 2 | `sys_log` | 系统操作日志表 | user_id, operation, duration |
 | 3 | `user_behavior` | 用户行为记录表 | event_id, user_id, item_id, **unit_price**, **qty** |
 | 4 | `user_profile` | 用户画像表 | user_id, rfm_score, user_group, cluster_id |
-| 5 | `product` | 商品统计表 | item_id, category_id, buy_count |
+| 5 | `product` | 商品统计表 | item_id, brand, category_id, price, buy_count |
 | 6 | `category` | 类目统计表 | category_id, product_count, buy_count |
-| 7 | `analysis_cache` | 分析报表缓存表 | cache_key, cache_value, expire_time |
+| 7 | `product_public_mapping` | 站内商品与公网商品映射表 | item_id, source_platform, source_product_id, mapping_confidence |
+| 8 | `product_public_metric` | 公网商品口碑指标表 | item_id, positive_rate, review_count, shop_score |
+| 9 | `analysis_cache` | 分析报表缓存表 | cache_key, cache_value, expire_time |
 
 ---
 
-## 六、索引设计
+## 七、索引设计
 
 | 表名 | 索引名 | 索引字段 | 说明 |
 |:---|:---|:---|:---|
@@ -215,10 +293,14 @@ erDiagram
 | `user_behavior` | idx_type_time_user | behavior_type, behavior_time, user_id | 用户行为时序查询 |
 | `user_profile` | idx_user_id | user_id | 用户ID查询 |
 | `user_profile` | idx_cluster_id | cluster_id | 聚类分析 |
+| `product_public_mapping` | uk_item_platform | item_id, source_platform | 单个站内商品在同平台只允许一个确认映射 |
+| `product_public_mapping` | uk_source_platform_product | source_platform, source_product_id | 防止同公网商品重复映射 |
+| `product_public_metric` | uk_metric_item_platform | item_id, source_platform | 单个站内商品在同平台只保留一条最新指标 |
+| `product_public_metric` | idx_metric_status | crawl_status | 便于抓取任务状态筛选 |
 
 ---
 
-## 七、字段语义说明
+## 八、字段语义说明
 
 ### M值（Monetary）计算公式
 
