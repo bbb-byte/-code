@@ -2,6 +2,7 @@ package com.ecommerce.analysis.service;
 
 import com.baomidou.mybatisplus.extension.service.IService;
 import com.ecommerce.analysis.entity.UserBehavior;
+import com.ecommerce.analysis.vo.HotProductsPublicMetricsPageVO;
 import com.ecommerce.analysis.vo.DashboardVO;
 
 import java.util.List;
@@ -40,7 +41,7 @@ public interface UserBehaviorService extends IService<UserBehavior> {
     /**
      * 获取热门商品及京东公开评价补充指标。
      */
-    List<Map<String, Object>> getHotProductsWithPublicMetrics(int limit);
+    HotProductsPublicMetricsPageVO getHotProductsWithPublicMetrics(int page, int pageSize, boolean onlyWithMetrics);
 
     /**
      * 获取热门类目

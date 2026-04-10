@@ -1,12 +1,14 @@
 package com.ecommerce.analysis.service.impl;
 
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
+import com.ecommerce.analysis.common.Constants;
 import com.ecommerce.analysis.entity.UserBehavior;
 import com.ecommerce.analysis.mapper.ProductPublicMetricMapper;
 import com.ecommerce.analysis.mapper.UserBehaviorMapper;
 import com.ecommerce.analysis.mapper.UserProfileMapper;
 import com.ecommerce.analysis.service.UserBehaviorService;
 import com.ecommerce.analysis.vo.DashboardVO;
+import com.ecommerce.analysis.vo.HotProductsPublicMetricsPageVO;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
@@ -16,13 +18,15 @@ import java.util.Map;
 import java.util.Objects;
 
 /**
- * 用户行为服务实现类
+ * 鐢ㄦ埛琛屼负鏈嶅姟瀹炵幇绫?
  */
 @Service
 public class UserBehaviorServiceImpl extends ServiceImpl<UserBehaviorMapper, UserBehavior>
         implements UserBehaviorService {
 
     private static final String JD_PLATFORM = "jd";
+    private static final long ANALYSIS_CACHE_TTL_MINUTES = 10;
+    private static final long HOT_PRODUCTS_CACHE_TTL_MINUTES = 10;
 
     @Autowired
     private UserBehaviorMapper userBehaviorMapper;
@@ -33,21 +37,118 @@ public class UserBehaviorServiceImpl extends ServiceImpl<UserBehaviorMapper, Use
     @Autowired
     private ProductPublicMetricMapper productPublicMetricMapper;
 
+    @Autowired
+    private AnalysisCacheService analysisCacheService;
+
     @Override
     public DashboardVO getDashboardData() {
+        String cacheKey = Constants.REDIS_ANALYSIS_PREFIX + "dashboard";
+        return analysisCacheService.getOrLoad(cacheKey, ANALYSIS_CACHE_TTL_MINUTES, DashboardVO.class,
+                this::loadDashboardData);
+    }
+
+    @Override
+    public List<Map<String, Object>> getBehaviorTypeDistribution() {
+        String cacheKey = Constants.REDIS_ANALYSIS_PREFIX + "behavior-distribution";
+        return analysisCacheService.getOrLoad(cacheKey, ANALYSIS_CACHE_TTL_MINUTES,
+                userBehaviorMapper::countByBehaviorType);
+    }
+
+    @Override
+    public List<Map<String, Object>> getDailyBehaviorTrend(String startDate, String endDate) {
+        String normalizedStartDate = startDate;
+        String normalizedEndDate = endDate;
+        if (isBlank(normalizedStartDate) || isBlank(normalizedEndDate)) {
+            Map<String, Object> latestDateRange = userBehaviorMapper.getLatestDateRange();
+            if (latestDateRange == null || latestDateRange.get("start_date") == null
+                    || latestDateRange.get("end_date") == null) {
+                return java.util.Collections.emptyList();
+            }
+            normalizedStartDate = Objects.toString(latestDateRange.get("start_date"), null);
+            normalizedEndDate = Objects.toString(latestDateRange.get("end_date"), null);
+        }
+        String cacheKey = Constants.REDIS_ANALYSIS_PREFIX + "daily-trend:" + normalizedStartDate + ":" + normalizedEndDate;
+        String finalStartDate = normalizedStartDate;
+        String finalEndDate = normalizedEndDate;
+        return analysisCacheService.getOrLoad(cacheKey, ANALYSIS_CACHE_TTL_MINUTES,
+                () -> userBehaviorMapper.getDailyBehaviorStats(finalStartDate, finalEndDate));
+    }
+
+    @Override
+    public List<Map<String, Object>> getHotProductsByView(int limit) {
+        String cacheKey = Constants.REDIS_ANALYSIS_PREFIX + "hot-products:view:" + limit;
+        return analysisCacheService.getOrLoad(cacheKey, HOT_PRODUCTS_CACHE_TTL_MINUTES,
+                () -> userBehaviorMapper.getHotProductsByView(limit));
+    }
+
+    @Override
+    public List<Map<String, Object>> getHotProductsByBuy(int limit) {
+        String cacheKey = Constants.REDIS_ANALYSIS_PREFIX + "hot-products:buy:" + limit;
+        return analysisCacheService.getOrLoad(cacheKey, HOT_PRODUCTS_CACHE_TTL_MINUTES,
+                () -> userBehaviorMapper.getHotProductsByBuy(limit));
+    }
+
+    @Override
+    public HotProductsPublicMetricsPageVO getHotProductsWithPublicMetrics(int page, int pageSize, boolean onlyWithMetrics) {
+        int safePage = Math.max(page, 1);
+        int safePageSize = pageSize <= 0 ? 10 : Math.min(pageSize, 50);
+        int offset = (safePage - 1) * safePageSize;
+        String cacheKey = Constants.REDIS_ANALYSIS_PREFIX + "hot-products:public-metrics:" + JD_PLATFORM + ":" + onlyWithMetrics + ":" + safePage + ":" + safePageSize;
+        return analysisCacheService.getOrLoad(cacheKey, HOT_PRODUCTS_CACHE_TTL_MINUTES,
+                HotProductsPublicMetricsPageVO.class,
+                () -> loadHotProductsPublicMetricsPage(offset, safePage, safePageSize, onlyWithMetrics));
+    }
+
+    @Override
+    public List<Map<String, Object>> getHotCategories(int limit) {
+        String cacheKey = Constants.REDIS_ANALYSIS_PREFIX + "hot-categories:" + limit;
+        return analysisCacheService.getOrLoad(cacheKey, HOT_PRODUCTS_CACHE_TTL_MINUTES,
+                () -> userBehaviorMapper.getHotCategories(limit));
+    }
+
+    @Override
+    public Map<String, Object> getConversionFunnel() {
+        String cacheKey = Constants.REDIS_ANALYSIS_PREFIX + "conversion-funnel";
+        return analysisCacheService.getOrLoad(cacheKey, ANALYSIS_CACHE_TTL_MINUTES,
+                userBehaviorMapper::getConversionFunnel);
+    }
+
+    @Override
+    public List<Map<String, Object>> getHourlyDistribution() {
+        String cacheKey = Constants.REDIS_ANALYSIS_PREFIX + "hourly-distribution";
+        return analysisCacheService.getOrLoad(cacheKey, ANALYSIS_CACHE_TTL_MINUTES,
+                userBehaviorMapper::getHourlyDistribution);
+    }
+
+    @Override
+    public Map<String, Object> getDataOverview() {
+        String cacheKey = Constants.REDIS_ANALYSIS_PREFIX + "overview";
+        return analysisCacheService.getOrLoad(cacheKey, ANALYSIS_CACHE_TTL_MINUTES, () -> {
+            Map<String, Object> overview = new HashMap<>();
+            overview.put("totalUsers", userBehaviorMapper.countDistinctUsers());
+            overview.put("totalProducts", userBehaviorMapper.countDistinctItems());
+            overview.put("totalCategories", userBehaviorMapper.countDistinctCategories());
+            overview.put("totalBehaviors", count());
+            return overview;
+        });
+    }
+
+    @Override
+    public List<UserBehavior> getLatestBehaviors(int limit) {
+        return userBehaviorMapper.getLatestBehaviors(limit);
+    }
+
+    private DashboardVO loadDashboardData() {
         DashboardVO vo = new DashboardVO();
 
-        // 获取基础统计数据
         vo.setTotalUsers(userBehaviorMapper.countDistinctUsers());
         vo.setTotalProducts(userBehaviorMapper.countDistinctItems());
         vo.setTotalCategories(userBehaviorMapper.countDistinctCategories());
         vo.setTotalBehaviors(count());
 
-        // 获取行为类型统计
         List<Map<String, Object>> behaviorStats = userBehaviorMapper.countByBehaviorType();
         vo.setBehaviorDistribution(behaviorStats);
 
-        // 计算各类型数量
         long totalViews = 0, totalBuys = 0, totalCarts = 0, totalFavs = 0;
         for (Map<String, Object> stat : behaviorStats) {
             String type = (String) stat.get("behavior_type");
@@ -65,6 +166,8 @@ public class UserBehaviorServiceImpl extends ServiceImpl<UserBehaviorMapper, Use
                 case "fav":
                     totalFavs = count;
                     break;
+                default:
+                    break;
             }
         }
         vo.setTotalViews(totalViews);
@@ -72,7 +175,6 @@ public class UserBehaviorServiceImpl extends ServiceImpl<UserBehaviorMapper, Use
         vo.setTotalCarts(totalCarts);
         vo.setTotalFavs(totalFavs);
 
-        // 计算转化率 (购买用户数 / 浏览用户数)
         Map<String, Object> funnel = userBehaviorMapper.getConversionFunnel();
         if (funnel != null) {
             Long pvUsers = ((Number) funnel.get("pv_users")).longValue();
@@ -82,80 +184,21 @@ public class UserBehaviorServiceImpl extends ServiceImpl<UserBehaviorMapper, Use
             }
         }
 
-        // 热门商品和类目
         vo.setHotProducts(userBehaviorMapper.getHotProductsByBuy(10));
         vo.setHotCategories(userBehaviorMapper.getHotCategories(10));
-
-        // 用户分群分布
         vo.setUserGroupDistribution(userProfileMapper.countByUserGroup());
-
-        // 每小时行为分布
         vo.setHourlyDistribution(userBehaviorMapper.getHourlyDistribution());
-
         return vo;
     }
 
-    @Override
-    public List<Map<String, Object>> getBehaviorTypeDistribution() {
-        return userBehaviorMapper.countByBehaviorType();
-    }
-
-    @Override
-    public List<Map<String, Object>> getDailyBehaviorTrend(String startDate, String endDate) {
-        if (isBlank(startDate) || isBlank(endDate)) {
-            Map<String, Object> latestDateRange = userBehaviorMapper.getLatestDateRange();
-            if (latestDateRange == null || latestDateRange.get("start_date") == null || latestDateRange.get("end_date") == null) {
-                return java.util.Collections.emptyList();
-            }
-            startDate = Objects.toString(latestDateRange.get("start_date"), null);
-            endDate = Objects.toString(latestDateRange.get("end_date"), null);
-        }
-        return userBehaviorMapper.getDailyBehaviorStats(startDate, endDate);
-    }
-
-    @Override
-    public List<Map<String, Object>> getHotProductsByView(int limit) {
-        return userBehaviorMapper.getHotProductsByView(limit);
-    }
-
-    @Override
-    public List<Map<String, Object>> getHotProductsByBuy(int limit) {
-        return userBehaviorMapper.getHotProductsByBuy(limit);
-    }
-
-    @Override
-    public List<Map<String, Object>> getHotProductsWithPublicMetrics(int limit) {
-        return productPublicMetricMapper.getHotProductsWithPublicMetrics(limit, JD_PLATFORM);
-    }
-
-    @Override
-    public List<Map<String, Object>> getHotCategories(int limit) {
-        return userBehaviorMapper.getHotCategories(limit);
-    }
-
-    @Override
-    public Map<String, Object> getConversionFunnel() {
-        return userBehaviorMapper.getConversionFunnel();
-    }
-
-    @Override
-    public List<Map<String, Object>> getHourlyDistribution() {
-        return userBehaviorMapper.getHourlyDistribution();
-    }
-
-    @Override
-    public Map<String, Object> getDataOverview() {
-        Map<String, Object> overview = new HashMap<>();
-        overview.put("totalUsers", userBehaviorMapper.countDistinctUsers());
-        overview.put("totalProducts", userBehaviorMapper.countDistinctItems());
-        overview.put("totalCategories", userBehaviorMapper.countDistinctCategories());
-        overview.put("totalBehaviors", count());
-        return overview;
-    }
-
-    @Override
-    public List<UserBehavior> getLatestBehaviors(int limit) {
-        return userBehaviorMapper.getLatestBehaviors(limit);
+    private HotProductsPublicMetricsPageVO loadHotProductsPublicMetricsPage(int offset, int page, int pageSize,
+            boolean onlyWithMetrics) {
+        HotProductsPublicMetricsPageVO result = new HotProductsPublicMetricsPageVO();
+        result.setPage(page);
+        result.setPageSize(pageSize);
+        result.setTotal(productPublicMetricMapper.countHotProductsWithPublicMetrics(onlyWithMetrics, JD_PLATFORM));
+        result.setRows(productPublicMetricMapper.getHotProductsWithPublicMetrics(offset, pageSize, onlyWithMetrics, JD_PLATFORM));
+        return result;
     }
 
     private boolean isBlank(String value) {

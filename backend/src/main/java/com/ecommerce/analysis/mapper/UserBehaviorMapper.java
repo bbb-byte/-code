@@ -11,7 +11,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * 用户行为Mapper接口
+ * 鐢ㄦ埛琛屼负Mapper鎺ュ彛
  */
 @Mapper
 public interface UserBehaviorMapper extends BaseMapper<UserBehavior> {
@@ -22,13 +22,13 @@ public interface UserBehaviorMapper extends BaseMapper<UserBehavior> {
         int insertIgnore(UserBehavior behavior);
 
         /**
-         * 获取行为类型统计
+         * 鑾峰彇琛屼负绫诲瀷缁熻
          */
         @Select("SELECT behavior_type, COUNT(*) as count FROM user_behavior GROUP BY behavior_type")
         List<Map<String, Object>> countByBehaviorType();
 
         /**
-         * 获取每日行为统计
+         * 鑾峰彇姣忔棩琛屼负缁熻
          */
         @Select("SELECT DATE(behavior_date_time) as date, behavior_type, COUNT(*) as count " +
                         "FROM user_behavior " +
@@ -39,25 +39,31 @@ public interface UserBehaviorMapper extends BaseMapper<UserBehavior> {
                         @Param("endDate") String endDate);
 
         /**
-         * 获取热门商品(按浏览量)
+         * 鑾峰彇鐑棬鍟嗗搧(鎸夋祻瑙堥噺)
          */
-        @Select("SELECT ub.item_id, " +
-                        "COALESCE(NULLIF(MAX(p.name), ''), CONCAT('商品#', ub.item_id)) as product_name, " +
-                        "MAX(p.brand) as brand, " +
-                        "MAX(p.category_name) as category_name, " +
-                        "MAX(p.price) as price, " +
-                        "COUNT(*) as view_count " +
-                        "FROM user_behavior ub " +
-                        "LEFT JOIN product p ON ub.item_id = p.item_id " +
-                        "WHERE ub.behavior_type = 'pv' " +
-                        "GROUP BY ub.item_id ORDER BY view_count DESC LIMIT #{limit}")
+        @Select("SELECT hot.item_id, " +
+                        "COALESCE(NULLIF(p.name, ''), CONCAT('鍟嗗搧#', hot.item_id)) as product_name, " +
+                        "p.brand as brand, " +
+                        "p.category_name as category_name, " +
+                        "p.price as price, " +
+                        "hot.view_count as view_count " +
+                        "FROM (" +
+                        "SELECT item_id, COUNT(*) as view_count " +
+                        "FROM user_behavior " +
+                        "WHERE behavior_type = 'pv' " +
+                        "GROUP BY item_id " +
+                        "ORDER BY view_count DESC " +
+                        "LIMIT #{limit}" +
+                        ") hot " +
+                        "LEFT JOIN product p ON hot.item_id = p.item_id " +
+                        "ORDER BY hot.view_count DESC")
         List<Map<String, Object>> getHotProductsByView(@Param("limit") int limit);
 
         /**
-         * 获取热门商品(按购买量)
+         * 鑾峰彇鐑棬鍟嗗搧(鎸夎喘涔伴噺)
          */
         @Select("SELECT ub.item_id, " +
-                        "COALESCE(NULLIF(MAX(p.name), ''), CONCAT('商品#', ub.item_id)) as product_name, " +
+                        "COALESCE(NULLIF(MAX(p.name), ''), CONCAT('鍟嗗搧#', ub.item_id)) as product_name, " +
                         "MAX(p.brand) as brand, " +
                         "MAX(p.category_name) as category_name, " +
                         "MAX(p.price) as price, " +
@@ -69,10 +75,10 @@ public interface UserBehaviorMapper extends BaseMapper<UserBehavior> {
         List<Map<String, Object>> getHotProductsByBuy(@Param("limit") int limit);
 
         /**
-         * 获取热门类目
+         * 鑾峰彇鐑棬绫荤洰
          */
         @Select("SELECT ub.category_id, " +
-                        "COALESCE(NULLIF(MAX(p.category_name), ''), CONCAT('类目#', ub.category_id)) as category_name, " +
+                        "COALESCE(NULLIF(MAX(p.category_name), ''), CONCAT('绫荤洰#', ub.category_id)) as category_name, " +
                         "MAX(p.price) as price, " +
                         "COUNT(*) as count " +
                         "FROM user_behavior ub " +
@@ -82,7 +88,7 @@ public interface UserBehaviorMapper extends BaseMapper<UserBehavior> {
         List<Map<String, Object>> getHotCategories(@Param("limit") int limit);
 
         /**
-         * 获取用户行为汇总(用于RFM计算，M值 = Σ(unit_price * qty))
+         * 鑾峰彇鐢ㄦ埛琛屼负姹囨€?鐢ㄤ簬RFM璁＄畻锛孧鍊?= 危(unit_price * qty))
          */
         @Select("SELECT user_id, " +
                         "SUM(CASE WHEN behavior_type = 'pv' THEN 1 ELSE 0 END) as total_views, " +
@@ -97,22 +103,26 @@ public interface UserBehaviorMapper extends BaseMapper<UserBehavior> {
         List<Map<String, Object>> getUserBehaviorSummary();
 
         /**
-         * 获取转化漏斗数据（三步序列漏斗：浏览→加购→购买）
-         * 每一步都是前一步的子集，确保转化率不会超过100%
+         * 鑾峰彇杞寲婕忔枟鏁版嵁锛堜笁姝ュ簭鍒楁紡鏂楋細娴忚鈫掑姞璐啋璐拱锛?
+         * 姣忎竴姝ラ兘鏄墠涓€姝ョ殑瀛愰泦锛岀‘淇濊浆鍖栫巼涓嶄細瓒呰繃100%
          */
         @Select("SELECT " +
-                        "(SELECT COUNT(DISTINCT user_id) FROM user_behavior WHERE behavior_type = 'pv') as pv_users, " +
-                        "(SELECT COUNT(DISTINCT user_id) FROM user_behavior " +
-                        " WHERE behavior_type = 'cart' " +
-                        " AND user_id IN (SELECT DISTINCT user_id FROM user_behavior WHERE behavior_type = 'pv')) as cart_users, "
-                        +
-                        "(SELECT COUNT(DISTINCT user_id) FROM user_behavior " +
-                        " WHERE behavior_type = 'buy' " +
-                        " AND user_id IN (SELECT DISTINCT user_id FROM user_behavior WHERE behavior_type = 'cart')) as buy_users")
+                        "SUM(has_pv) as pv_users, " +
+                        "SUM(CASE WHEN has_pv = 1 AND has_cart = 1 THEN 1 ELSE 0 END) as cart_users, " +
+                        "SUM(CASE WHEN has_cart = 1 AND has_buy = 1 THEN 1 ELSE 0 END) as buy_users " +
+                        "FROM (" +
+                        "  SELECT user_id, " +
+                        "         MAX(CASE WHEN behavior_type = 'pv' THEN 1 ELSE 0 END) as has_pv, " +
+                        "         MAX(CASE WHEN behavior_type = 'cart' THEN 1 ELSE 0 END) as has_cart, " +
+                        "         MAX(CASE WHEN behavior_type = 'buy' THEN 1 ELSE 0 END) as has_buy " +
+                        "  FROM user_behavior " +
+                        "  WHERE behavior_type IN ('pv', 'cart', 'buy') " +
+                        "  GROUP BY user_id" +
+                        ") funnel")
         Map<String, Object> getConversionFunnel();
 
         /**
-         * 获取每小时行为分布
+         * 鑾峰彇姣忓皬鏃惰涓哄垎甯?
          */
         @Select("SELECT HOUR(behavior_date_time) as hour, COUNT(*) as count " +
                         "FROM user_behavior " +
@@ -120,37 +130,37 @@ public interface UserBehaviorMapper extends BaseMapper<UserBehavior> {
         List<Map<String, Object>> getHourlyDistribution();
 
         /**
-         * 获取用户数量
+         * 鑾峰彇鐢ㄦ埛鏁伴噺
          */
         @Select("SELECT COUNT(DISTINCT user_id) FROM user_behavior")
         Long countDistinctUsers();
 
         /**
-         * 获取商品数量
+         * 鑾峰彇鍟嗗搧鏁伴噺
          */
         @Select("SELECT COUNT(DISTINCT item_id) FROM user_behavior")
         Long countDistinctItems();
 
         /**
-         * 获取类目数量
+         * 鑾峰彇绫荤洰鏁伴噺
          */
         @Select("SELECT COUNT(DISTINCT category_id) FROM user_behavior")
         Long countDistinctCategories();
 
         /**
-         * 获取最新导入的行为记录
+         * 鑾峰彇鏈€鏂板鍏ョ殑琛屼负璁板綍
          */
         @Select("SELECT * FROM user_behavior ORDER BY id DESC LIMIT #{limit}")
         List<UserBehavior> getLatestBehaviors(@Param("limit") int limit);
 
         /**
-         * 获取最大行为时间
+         * 鑾峰彇鏈€澶ц涓烘椂闂?
          */
         @Select("SELECT MAX(behavior_date_time) FROM user_behavior")
         java.time.LocalDateTime getMaxBehaviorDateTime();
 
         /**
-         * 获取最新数据时间窗口
+         * 鑾峰彇鏈€鏂版暟鎹椂闂寸獥鍙?
          */
         @Select("SELECT DATE(MAX(behavior_date_time)) as end_date, " +
                         "DATE(DATE_SUB(MAX(behavior_date_time), INTERVAL 13 DAY)) as start_date " +

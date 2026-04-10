@@ -18,24 +18,34 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDateTime;
 import java.time.temporal.ChronoUnit;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Collectors;
 
 /**
- * RFM分析服务实现类
+ * RFM analysis service implementation.
  */
 @Slf4j
 @Service
 public class RFMServiceImpl implements RFMService {
 
     private static final String ANALYSIS_BUSY_MESSAGE = "已有画像分析任务正在执行，请稍后重试";
+    private static final String NON_CONVERTED_GROUP = "未转化用户";
+    private static final long PROFILE_CACHE_TTL_MINUTES = 10;
 
     @Autowired
     private UserBehaviorMapper userBehaviorMapper;
 
     @Autowired
     private UserProfileMapper userProfileMapper;
+
+    @Autowired
+    private AnalysisCacheService analysisCacheService;
 
     private final AtomicBoolean analysisRunning = new AtomicBoolean(false);
 
@@ -51,17 +61,14 @@ public class RFMServiceImpl implements RFMService {
     }
 
     private void doCalculateAllUserRFM() {
-        log.info("开始计算所有用户的RFM值...");
+        log.info("开始计算所有用户的 RFM 值...");
 
-        // 获取用户行为汇总数据
         List<Map<String, Object>> summaryList = userBehaviorMapper.getUserBehaviorSummary();
         log.info("共获取到 {} 个用户的行为汇总数据", summaryList.size());
 
-        // 分离有购买和无购买的用户
         List<UserProfile> buyerProfiles = new ArrayList<>();
         List<UserProfile> nonBuyerProfiles = new ArrayList<>();
 
-        // 仅收集有购买行为的用户的RFM值，用于计算分位数基线
         List<Integer> buyerRecency = new ArrayList<>();
         List<Integer> buyerFrequency = new ArrayList<>();
         List<BigDecimal> buyerMonetary = new ArrayList<>();
@@ -71,7 +78,6 @@ public class RFMServiceImpl implements RFMService {
             UserProfile profile = new UserProfile();
             profile.setUserId(((Number) summary.get("user_id")).longValue());
 
-            // 行为统计
             int totalViews = ((Number) summary.get("total_views")).intValue();
             int totalCarts = ((Number) summary.get("total_carts")).intValue();
             int totalFavs = ((Number) summary.get("total_favs")).intValue();
@@ -82,7 +88,6 @@ public class RFMServiceImpl implements RFMService {
             profile.setTotalFavs(totalFavs);
             profile.setTotalBuys(totalBuys);
 
-            // 最后活跃时间
             Object lastActiveObj = summary.get("last_active_time");
             LocalDateTime lastActiveTime = null;
             if (lastActiveObj instanceof LocalDateTime) {
@@ -92,7 +97,6 @@ public class RFMServiceImpl implements RFMService {
             }
             profile.setLastActiveTime(lastActiveTime);
 
-            // 计算R - 最近购买距今天数（使用最后购买时间而非最后活跃时间）
             Object lastBuyObj = summary.get("last_buy_time");
             LocalDateTime lastBuyTime = null;
             if (lastBuyObj instanceof LocalDateTime) {
@@ -101,18 +105,17 @@ public class RFMServiceImpl implements RFMService {
                 lastBuyTime = ((java.sql.Timestamp) lastBuyObj).toLocalDateTime();
             }
 
-            int recency = 999; // 默认值（未购买用户）
+            int recency = 999;
             if (lastBuyTime != null) {
                 recency = (int) ChronoUnit.DAYS.between(lastBuyTime, baseTime);
-                if (recency < 0)
+                if (recency < 0) {
                     recency = 0;
+                }
             }
             profile.setRecency(recency);
 
-            // 计算F - 消费频率(购买次数)
             profile.setFrequency(totalBuys);
 
-            // 计算M - 消费金额(使用真实交易金额)
             Object amountObj = summary.get("total_amount");
             BigDecimal monetary = BigDecimal.ZERO;
             if (amountObj != null) {
@@ -124,7 +127,6 @@ public class RFMServiceImpl implements RFMService {
             }
             profile.setMonetary(monetary);
 
-            // 计算转化率
             if (totalViews > 0) {
                 BigDecimal conversionRate = BigDecimal.valueOf(totalBuys)
                         .divide(BigDecimal.valueOf(totalViews), 4, RoundingMode.HALF_UP);
@@ -133,7 +135,6 @@ public class RFMServiceImpl implements RFMService {
                 profile.setConversionRate(BigDecimal.ZERO);
             }
 
-            // 按是否有购买行为分组
             if (totalBuys > 0) {
                 buyerProfiles.add(profile);
                 buyerRecency.add(recency);
@@ -147,45 +148,36 @@ public class RFMServiceImpl implements RFMService {
         log.info("有购买行为的用户: {} 个，无购买行为的用户: {} 个",
                 buyerProfiles.size(), nonBuyerProfiles.size());
 
-        // 仅基于有购买行为的用户计算分位数
         Collections.sort(buyerRecency);
         Collections.sort(buyerFrequency);
         Collections.sort(buyerMonetary);
 
-        // 对有购买行为的用户计算RFM评分
         for (UserProfile profile : buyerProfiles) {
-            // R评分 (越近越好，所以反向计算)
             int rScore = 5 - getQuintileScore(profile.getRecency(), buyerRecency) + 1;
             profile.setRScore(Math.max(1, Math.min(5, rScore)));
 
-            // F评分 (越多越好)
             int fScore = getQuintileScore(profile.getFrequency(), buyerFrequency);
             profile.setFScore(Math.max(1, Math.min(5, fScore)));
 
-            // M评分 (越多越好)
-            int mScore = getQuintileScore(profile.getMonetary().intValue(),
+            int mScore = getQuintileScore(
+                    profile.getMonetary().intValue(),
                     buyerMonetary.stream().map(BigDecimal::intValue).collect(Collectors.toList()));
             profile.setMScore(Math.max(1, Math.min(5, mScore)));
 
-            // RFM总分
             int rfmScore = profile.getRScore() + profile.getFScore() + profile.getMScore();
             profile.setRfmScore(rfmScore);
-
-            // 根据RFM值确定用户分群
             profile.setUserGroup(determineUserGroup(profile));
         }
 
-        // 无购买行为的用户: 标记为未转化用户，RFM各项评1分
         for (UserProfile profile : nonBuyerProfiles) {
             profile.setRScore(1);
             profile.setFScore(1);
             profile.setMScore(1);
             profile.setRfmScore(3);
             profile.setClusterId(-1);
-            profile.setUserGroup("未转化用户");
+            profile.setUserGroup(NON_CONVERTED_GROUP);
         }
 
-        // 合并所有用户并批量保存
         List<UserProfile> allProfiles = new ArrayList<>();
         allProfiles.addAll(buyerProfiles);
         allProfiles.addAll(nonBuyerProfiles);
@@ -194,7 +186,7 @@ public class RFMServiceImpl implements RFMService {
             userProfileMapper.upsertProfile(profile);
         }
 
-        log.info("RFM计算完成，共处理 {} 个用户（购买用户: {}, 未转化: {}）",
+        log.info("RFM 计算完成，共处理 {} 个用户（购买用户: {}，未转化用户: {}）",
                 allProfiles.size(), buyerProfiles.size(), nonBuyerProfiles.size());
     }
 
@@ -218,7 +210,6 @@ public class RFMServiceImpl implements RFMService {
 
     @Override
     public UserProfile calculateUserRFM(Long userId) {
-        // 获取用户的RFM画像
         LambdaQueryWrapper<UserProfile> wrapper = new LambdaQueryWrapper<>();
         wrapper.eq(UserProfile::getUserId, userId);
         return userProfileMapper.selectOne(wrapper);
@@ -236,43 +227,38 @@ public class RFMServiceImpl implements RFMService {
     }
 
     private void doPerformKMeansClustering(int k) {
-        log.info("开始执行K-Means聚类，K={}", k);
+        log.info("开始执行 K-Means 聚类，K={}", k);
 
-        // 获取所有用户画像
         List<UserProfile> profiles = userProfileMapper.selectList(null);
         if (profiles.isEmpty()) {
-            log.warn("没有用户画像数据，请先执行RFM计算");
+            log.warn("没有用户画像数据，请先执行 RFM 计算");
             return;
         }
 
-        // 过滤：只对有购买行为的用户进行聚类
         List<UserProfile> profilesWithBuys = profiles.stream()
                 .filter(p -> p.getTotalBuys() != null && p.getTotalBuys() > 0)
                 .collect(Collectors.toList());
 
-        log.info("有购买行为的用户数: {}，无购买用户数: {}",
+        log.info("有购买行为的用户数: {}，无购买行为的用户数: {}",
                 profilesWithBuys.size(), profiles.size() - profilesWithBuys.size());
 
-        // 无购买用户标记为“未转化” (clusterId = -1)
         profiles.stream()
                 .filter(p -> p.getTotalBuys() == null || p.getTotalBuys() == 0)
                 .forEach(p -> {
                     p.setClusterId(-1);
-                    p.setUserGroup("未转化用户");
+                    p.setUserGroup(NON_CONVERTED_GROUP);
                     userProfileMapper.updateById(p);
                 });
 
         if (profilesWithBuys.size() < k) {
-            log.warn("有购买的用户数({}) 小于 K({})，无法聚类", profilesWithBuys.size(), k);
+            log.warn("有购买行为的用户数({}) 小于 K({})，无法聚类", profilesWithBuys.size(), k);
             return;
         }
 
-        // 准备聚类数据点
         List<DoublePoint> points = new ArrayList<>();
         Map<DoublePoint, Long> pointUserMap = new HashMap<>();
 
         for (UserProfile profile : profilesWithBuys) {
-            // 使用RFM评分作为聚类特征
             double[] values = new double[] {
                     profile.getRScore() != null ? profile.getRScore() : 1,
                     profile.getFScore() != null ? profile.getFScore() : 1,
@@ -283,11 +269,9 @@ public class RFMServiceImpl implements RFMService {
             pointUserMap.put(point, profile.getUserId());
         }
 
-        // 执行K-Means++聚类
         KMeansPlusPlusClusterer<DoublePoint> clusterer = new KMeansPlusPlusClusterer<>(k, 1000);
         List<CentroidCluster<DoublePoint>> clusters = clusterer.cluster(points);
 
-        // 更新用户的聚类标签
         Map<Long, Integer> userClusterMap = new HashMap<>();
         for (int i = 0; i < clusters.size(); i++) {
             CentroidCluster<DoublePoint> cluster = clusters.get(i);
@@ -299,7 +283,6 @@ public class RFMServiceImpl implements RFMService {
             }
         }
 
-        // 批量更新
         for (UserProfile profile : profilesWithBuys) {
             Integer clusterId = userClusterMap.get(profile.getUserId());
             if (clusterId != null) {
@@ -308,7 +291,7 @@ public class RFMServiceImpl implements RFMService {
             }
         }
 
-        log.info("K-Means聚类完成，共生成 {} 个簇", clusters.size());
+        log.info("K-Means 聚类完成，共生成 {} 个簇", clusters.size());
     }
 
     private void beginAnalysisTask(String taskName) {
@@ -320,72 +303,80 @@ public class RFMServiceImpl implements RFMService {
 
     private void finishAnalysisTask(String taskName) {
         analysisRunning.set(false);
+        analysisCacheService.evictAllAnalyticsCaches();
         log.info("画像分析任务结束: {}", taskName);
     }
 
     @Override
     public List<Map<String, Object>> getUserGroupDistribution() {
-        return userProfileMapper.countByUserGroup();
+        String cacheKey = Constants.REDIS_PROFILE_PREFIX + "group-distribution";
+        return analysisCacheService.getOrLoad(cacheKey, PROFILE_CACHE_TTL_MINUTES,
+                userProfileMapper::countByUserGroup);
     }
 
     @Override
     public List<Map<String, Object>> getClusterDistribution() {
-        return userProfileMapper.countByCluster();
+        String cacheKey = Constants.REDIS_PROFILE_PREFIX + "cluster-distribution";
+        return analysisCacheService.getOrLoad(cacheKey, PROFILE_CACHE_TTL_MINUTES,
+                userProfileMapper::countByCluster);
     }
 
     @Override
     public List<Map<String, Object>> getRFMScoreDistribution() {
-        return userProfileMapper.getRfmScoreDistribution();
+        String cacheKey = Constants.REDIS_PROFILE_PREFIX + "rfm-distribution";
+        return analysisCacheService.getOrLoad(cacheKey, PROFILE_CACHE_TTL_MINUTES,
+                userProfileMapper::getRfmScoreDistribution);
     }
 
     @Override
     public List<Map<String, Object>> getClusterCenters() {
-        return userProfileMapper.getClusterCenters();
+        String cacheKey = Constants.REDIS_PROFILE_PREFIX + "cluster-centers";
+        return analysisCacheService.getOrLoad(cacheKey, PROFILE_CACHE_TTL_MINUTES,
+                userProfileMapper::getClusterCenters);
     }
 
     @Override
     public List<UserProfile> getHighValueUsers(int limit) {
-        return userProfileMapper.getHighValueUsers(limit);
+        String cacheKey = Constants.REDIS_PROFILE_PREFIX + "high-value-users:" + limit;
+        return analysisCacheService.getOrLoadList(cacheKey, PROFILE_CACHE_TTL_MINUTES, UserProfile.class,
+                () -> userProfileMapper.getHighValueUsers(limit));
     }
 
     @Override
     public List<UserProfile> getTopUsersByGroup(String userGroup, int limit) {
-        return userProfileMapper.getTopUsersByGroup(userGroup, limit);
+        String normalizedGroup = userGroup == null ? "all" : userGroup;
+        String cacheKey = Constants.REDIS_PROFILE_PREFIX + "top-users:" + normalizedGroup + ":" + limit;
+        return analysisCacheService.getOrLoadList(cacheKey, PROFILE_CACHE_TTL_MINUTES, UserProfile.class,
+                () -> userProfileMapper.getTopUsersByGroup(userGroup, limit));
     }
 
-    /**
-     * 根据RFM值确定用户分群
-     */
     private String determineUserGroup(UserProfile profile) {
         int r = profile.getRScore();
         int f = profile.getFScore();
         int m = profile.getMScore();
         int total = r + f + m;
 
-        // 根据RFM组合判断用户类型
         if (r >= 4 && f >= 4 && m >= 4) {
-            return Constants.GROUP_HIGH_VALUE; // 高价值用户
+            return Constants.GROUP_HIGH_VALUE;
         } else if (r >= 4 && f >= 3) {
-            return Constants.GROUP_POTENTIAL; // 潜力用户
+            return Constants.GROUP_POTENTIAL;
         } else if (total >= 10) {
-            return Constants.GROUP_POTENTIAL; // 潜力用户
+            return Constants.GROUP_POTENTIAL;
         } else if (r <= 2 && f <= 2) {
-            return Constants.GROUP_LOST; // 流失用户
+            return Constants.GROUP_LOST;
         } else if (r <= 2) {
-            return Constants.GROUP_SLEEPING; // 沉睡用户
+            return Constants.GROUP_SLEEPING;
         } else if (f <= 2 && m <= 2) {
-            return Constants.GROUP_NEW; // 新用户
+            return Constants.GROUP_NEW;
         } else {
-            return Constants.GROUP_POTENTIAL; // 潜力用户
+            return Constants.GROUP_POTENTIAL;
         }
     }
 
-    /**
-     * 计算五分位评分
-     */
     private int getQuintileScore(int value, List<Integer> sortedList) {
-        if (sortedList.isEmpty())
+        if (sortedList.isEmpty()) {
             return 1;
+        }
 
         int size = sortedList.size();
         int q1 = sortedList.get(size / 5);
@@ -393,14 +384,18 @@ public class RFMServiceImpl implements RFMService {
         int q3 = sortedList.get(size * 3 / 5);
         int q4 = sortedList.get(size * 4 / 5);
 
-        if (value <= q1)
+        if (value <= q1) {
             return 1;
-        if (value <= q2)
+        }
+        if (value <= q2) {
             return 2;
-        if (value <= q3)
+        }
+        if (value <= q3) {
             return 3;
-        if (value <= q4)
+        }
+        if (value <= q4) {
             return 4;
+        }
         return 5;
     }
 }

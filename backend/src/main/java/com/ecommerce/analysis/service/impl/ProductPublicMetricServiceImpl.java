@@ -42,6 +42,9 @@ public class ProductPublicMetricServiceImpl implements ProductPublicMetricServic
     @Autowired
     private ProductPublicMappingMapper productPublicMappingMapper;
 
+    @Autowired
+    private AnalysisCacheService analysisCacheService;
+
     @Override
     public int importMappingsFromCsv(String filePath) throws IOException {
         int importedRows = 0;
@@ -66,6 +69,9 @@ public class ProductPublicMetricServiceImpl implements ProductPublicMetricServic
                 productPublicMappingMapper.upsert(mapping);
                 importedRows++;
             }
+        }
+        if (importedRows > 0) {
+            analysisCacheService.evictAnalysisCaches();
         }
         return importedRows;
     }
@@ -94,6 +100,9 @@ public class ProductPublicMetricServiceImpl implements ProductPublicMetricServic
                 productPublicMetricMapper.upsertLatest(metric);
                 importedRows++;
             }
+        }
+        if (importedRows > 0) {
+            analysisCacheService.evictAnalysisCaches();
         }
         return importedRows;
     }
@@ -160,6 +169,9 @@ public class ProductPublicMetricServiceImpl implements ProductPublicMetricServic
             productPublicMappingMapper.upsert(mapping);
             confirmedRows++;
         }
+        if (confirmedRows > 0) {
+            analysisCacheService.evictAnalysisCaches();
+        }
         return confirmedRows;
     }
 
@@ -186,7 +198,11 @@ public class ProductPublicMetricServiceImpl implements ProductPublicMetricServic
         if (sourcePlatform != null && mapping.getItemId() != null) {
             productPublicMetricMapper.deleteByItemAndPlatform(mapping.getItemId(), sourcePlatform);
         }
-        return productPublicMappingMapper.deleteById(id) > 0;
+        boolean removed = productPublicMappingMapper.deleteById(id) > 0;
+        if (removed) {
+            analysisCacheService.evictAnalysisCaches();
+        }
+        return removed;
     }
 
     private Map<String, Integer> parseHeader(String headerLine) {

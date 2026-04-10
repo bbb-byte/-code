@@ -29,8 +29,8 @@ export function getHotProductsByBuy(limit = 10) {
 }
 
 // 获取热门商品及京东公开评价补充指标
-export function getHotProductsWithPublicMetrics(limit = 10) {
-    return http.get('/analysis/hot-products/public-metrics', { params: { limit } })
+export function getHotProductsWithPublicMetrics(page = 1, pageSize = 10, onlyWithMetrics = true) {
+    return http.get('/analysis/hot-products/public-metrics', { params: { page, pageSize, onlyWithMetrics } })
 }
 
 // 获取热门类目

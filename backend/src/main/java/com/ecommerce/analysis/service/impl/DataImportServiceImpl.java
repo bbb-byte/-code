@@ -54,6 +54,9 @@ public class DataImportServiceImpl implements DataImportService {
     @Autowired
     private SqlSessionFactory sqlSessionFactory;
 
+    @Autowired
+    private AnalysisCacheService analysisCacheService;
+
     private final AtomicBoolean importing = new AtomicBoolean(false);
     private final AtomicLong acceptedRows = new AtomicLong(0);
     private final AtomicLong processedRows = new AtomicLong(0);
@@ -225,6 +228,9 @@ public class DataImportServiceImpl implements DataImportService {
         } finally {
             finishedAt = System.currentTimeMillis();
             importing.set(false);
+            if (insertedRows.get() > 0) {
+                analysisCacheService.evictAllAnalyticsCaches();
+            }
         }
     }
 

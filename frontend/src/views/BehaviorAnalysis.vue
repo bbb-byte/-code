@@ -7,7 +7,7 @@
 
     <!-- 行为统计概览 -->
     <el-row :gutter="24" class="stat-row">
-      <el-col :xs="24" :sm="12" :md="6" v-for="(stat, index) in statCards" :key="stat.key">
+      <el-col :xs="24" :sm="12" :md="6" v-for="(stat, index) in visibleStatCards" :key="stat.key">
         <div class="stat-card">
           <div class="stat-content">
             <div class="stat-label">{{ stat.label }}</div>
@@ -54,7 +54,6 @@ import { View, ShoppingCart, Star, Goods } from '@element-plus/icons-vue'
 const stats = ref({
   totalViews: 0,
   totalCarts: 0,
-  totalFavs: 0,
   totalBuys: 0
 })
 
@@ -64,6 +63,9 @@ const statCards = [
   { key: 'totalFavs', label: '总收藏次数', icon: markRaw(Star), color: 'text-amber-500' },
   { key: 'totalBuys', label: '总购买次数', icon: markRaw(Goods), color: 'text-emerald-500' }
 ]
+
+// The current archive dataset does not contain favorite events, so hide this summary card for now.
+const visibleStatCards = statCards.filter(stat => stat.key !== 'totalFavs')
 
 const trendChartRef = ref(null)
 const pieChartRef = ref(null)

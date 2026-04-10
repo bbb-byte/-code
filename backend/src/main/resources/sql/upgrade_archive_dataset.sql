@@ -75,6 +75,51 @@ PREPARE stmt FROM @ddl;
 EXECUTE stmt;
 DEALLOCATE PREPARE stmt;
 
+SET @ddl = IF (
+    EXISTS (
+        SELECT 1
+        FROM information_schema.statistics
+        WHERE table_schema = 'ecommerce_analysis'
+          AND table_name = 'user_behavior'
+          AND index_name = 'idx_behavior_type_item'
+    ),
+    'SELECT 1',
+    'ALTER TABLE user_behavior ADD INDEX idx_behavior_type_item (behavior_type, item_id)'
+);
+PREPARE stmt FROM @ddl;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+SET @ddl = IF (
+    EXISTS (
+        SELECT 1
+        FROM information_schema.statistics
+        WHERE table_schema = 'ecommerce_analysis'
+          AND table_name = 'user_behavior'
+          AND index_name = 'idx_behavior_type_user'
+    ),
+    'SELECT 1',
+    'ALTER TABLE user_behavior ADD INDEX idx_behavior_type_user (behavior_type, user_id)'
+);
+PREPARE stmt FROM @ddl;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+SET @ddl = IF (
+    EXISTS (
+        SELECT 1
+        FROM information_schema.statistics
+        WHERE table_schema = 'ecommerce_analysis'
+          AND table_name = 'user_profile'
+          AND index_name = 'idx_group_rfm_buy'
+    ),
+    'SELECT 1',
+    'ALTER TABLE user_profile ADD INDEX idx_group_rfm_buy (user_group, rfm_score, total_buys)'
+);
+PREPARE stmt FROM @ddl;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
 CREATE TABLE IF NOT EXISTS product_public_mapping (
     id BIGINT PRIMARY KEY AUTO_INCREMENT COMMENT 'primary key',
     item_id BIGINT NOT NULL COMMENT 'internal item id',

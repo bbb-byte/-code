@@ -23,6 +23,7 @@ public class Constants {
     public static final String REDIS_TOKEN_PREFIX = "token:";
     public static final String REDIS_USER_PREFIX = "user:";
     public static final String REDIS_ANALYSIS_PREFIX = "analysis:";
+    public static final String REDIS_PROFILE_PREFIX = "profile:";
 
     // Token相关
     public static final String TOKEN_HEADER = "Authorization";

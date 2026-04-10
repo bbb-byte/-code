@@ -2,6 +2,7 @@ package com.ecommerce.analysis.controller;
 
 import com.ecommerce.analysis.common.Result;
 import com.ecommerce.analysis.service.UserBehaviorService;
+import com.ecommerce.analysis.vo.HotProductsPublicMetricsPageVO;
 import com.ecommerce.analysis.vo.DashboardVO;
 import io.swagger.annotations.ApiOperation;
 import io.swagger.annotations.Api;
@@ -63,9 +64,11 @@ public class AnalysisController {
 
     @ApiOperation("获取热门商品及京东公开评价补充指标")
     @GetMapping("/hot-products/public-metrics")
-    public Result<List<Map<String, Object>>> getHotProductsWithPublicMetrics(
-            @RequestParam(defaultValue = "10") int limit) {
-        List<Map<String, Object>> data = userBehaviorService.getHotProductsWithPublicMetrics(limit);
+    public Result<HotProductsPublicMetricsPageVO> getHotProductsWithPublicMetrics(
+            @RequestParam(defaultValue = "1") int page,
+            @RequestParam(defaultValue = "10") int pageSize,
+            @RequestParam(defaultValue = "true") boolean onlyWithMetrics) {
+        HotProductsPublicMetricsPageVO data = userBehaviorService.getHotProductsWithPublicMetrics(page, pageSize, onlyWithMetrics);
         return Result.success(data);
     }
 

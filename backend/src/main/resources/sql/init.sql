@@ -48,6 +48,8 @@ CREATE TABLE user_behavior (
     INDEX idx_behavior_time (behavior_time),
     INDEX idx_behavior_date_time (behavior_date_time),
     INDEX idx_user_behavior_composite (user_id, behavior_type, behavior_time),
+    INDEX idx_behavior_type_item (behavior_type, item_id),
+    INDEX idx_behavior_type_user (behavior_type, user_id),
     INDEX idx_type_time_item (behavior_type, behavior_time, item_id),
     INDEX idx_type_time_user (behavior_type, behavior_time, user_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='user behaviors';
@@ -76,7 +78,8 @@ CREATE TABLE user_profile (
     INDEX idx_user_id (user_id),
     INDEX idx_user_group (user_group),
     INDEX idx_cluster_id (cluster_id),
-    INDEX idx_rfm_score (rfm_score)
+    INDEX idx_rfm_score (rfm_score),
+    INDEX idx_group_rfm_buy (user_group, rfm_score, total_buys)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='user profiles';
 
 DROP TABLE IF EXISTS product;

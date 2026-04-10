@@ -294,11 +294,15 @@ const initCharts = (groupData, rfmData, clusterData, centersData) => {
       },
       yAxis: { 
         type: 'value',
-        axisLabel: { color: theme.textSub },
+        minInterval: 1,
+        axisLabel: {
+          color: theme.textSub,
+          formatter: (value) => Number(value).toLocaleString('zh-CN', { maximumFractionDigits: 0 })
+        },
         axisLine: { lineStyle: { color: theme.axisLine } },
         splitLine: { lineStyle: { color: theme.splitLine } }
       },
-      grid: { left: 40, right: 20, bottom: 30, top: 20 },
+      grid: { left: 64, right: 20, bottom: 30, top: 20, containLabel: true },
       series: [{
         type: 'bar',
         data: rfmData.map(item => item.count),
