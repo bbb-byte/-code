@@ -6,22 +6,24 @@
     "scripts": {
         "dev": "vite",
         "build": "vite build",
-        "preview": "vite preview"
+        "preview": "vite preview",
+        "jd:search-check": "node scripts/jd-search-login-check.mjs"
     },
     "dependencies": {
-        "vue": "^3.4.0",
-        "vue-router": "^4.2.5",
-        "pinia": "^2.1.7",
-        "axios": "^1.6.2",
-        "element-plus": "^2.4.4",
         "@element-plus/icons-vue": "^2.3.1",
+        "axios": "^1.6.2",
+        "dayjs": "^1.11.10",
         "echarts": "^5.4.3",
+        "element-plus": "^2.4.4",
+        "pinia": "^2.1.7",
+        "vue": "^3.4.0",
         "vue-echarts": "^6.6.8",
-        "dayjs": "^1.11.10"
+        "vue-router": "^4.2.5"
     },
     "devDependencies": {
         "@vitejs/plugin-vue": "^4.5.2",
-        "vite": "^5.0.10",
-        "sass": "^1.69.5"
+        "playwright-core": "^1.59.1",
+        "sass": "^1.69.5",
+        "vite": "^5.0.10"
     }
 }

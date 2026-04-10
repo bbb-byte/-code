@@ -11,9 +11,11 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.io.BufferedReader;
-import java.io.FileReader;
 import java.io.IOException;
 import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.time.format.DateTimeParseException;
@@ -43,7 +45,7 @@ public class ProductPublicMetricServiceImpl implements ProductPublicMetricServic
     @Override
     public int importMappingsFromCsv(String filePath) throws IOException {
         int importedRows = 0;
-        try (BufferedReader reader = new BufferedReader(new FileReader(filePath))) {
+        try (BufferedReader reader = Files.newBufferedReader(Path.of(filePath), StandardCharsets.UTF_8)) {
             String headerLine = reader.readLine();
             if (headerLine == null || headerLine.trim().isEmpty()) {
                 return 0;
@@ -71,7 +73,7 @@ public class ProductPublicMetricServiceImpl implements ProductPublicMetricServic
     @Override
     public int importLatestMetricsFromCsv(String filePath) throws IOException {
         int importedRows = 0;
-        try (BufferedReader reader = new BufferedReader(new FileReader(filePath))) {
+        try (BufferedReader reader = Files.newBufferedReader(Path.of(filePath), StandardCharsets.UTF_8)) {
             String headerLine = reader.readLine();
             if (headerLine == null || headerLine.trim().isEmpty()) {
                 return 0;
@@ -104,7 +106,7 @@ public class ProductPublicMetricServiceImpl implements ProductPublicMetricServic
         long total = 0L;
         List<PublicMappingScoreRowVO> rows = new ArrayList<>();
 
-        try (BufferedReader reader = new BufferedReader(new FileReader(filePath))) {
+        try (BufferedReader reader = Files.newBufferedReader(Path.of(filePath), StandardCharsets.UTF_8)) {
             String headerLine = reader.readLine();
             if (headerLine == null || headerLine.trim().isEmpty()) {
                 PublicMappingScorePreviewVO result = new PublicMappingScorePreviewVO();

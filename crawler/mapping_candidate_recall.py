@@ -1,6 +1,8 @@
 import argparse
 import csv
 import re
+import sys
+import time
 from dataclasses import dataclass
 from html import unescape
 from pathlib import Path
@@ -15,6 +17,11 @@ from mapping_scorer import load_products
 JD_SEARCH_URL = "https://search.jd.com/Search"
 DEFAULT_TIMEOUT = 10
 DEFAULT_TOP_K = 5
+DEFAULT_HEADERS = {
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+    "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+}
 
 
 @dataclass
@@ -34,12 +41,17 @@ class JDCandidateRecall:
         timeout: int = DEFAULT_TIMEOUT,
         fixture_dir: Optional[Path] = None,
         allow_sample_fallback: bool = False,
+        request_delay: float = 0.0,
     ):
         self.timeout = timeout
         self.fixture_dir = fixture_dir
         self.allow_sample_fallback = allow_sample_fallback
+        self.request_delay = max(0.0, request_delay)
         self.shared_sample_hits = 0
+        self.risk_page_hits = 0
         self.debug_dir: Optional[Path] = None
+        self._session: Optional[requests.Session] = None
+        self._last_request_at: Optional[float] = None
 
     def set_debug_dir(self, debug_dir: Optional[Path]) -> None:
         self.debug_dir = debug_dir
@@ -55,10 +67,29 @@ class JDCandidateRecall:
     def extract_category_keyword(self, category_name: str) -> str:
         if not category_name:
             return ""
-        parts = [segment.strip() for segment in re.split(r"[>/|]", category_name) if segment.strip()]
+        parts = [segment.strip() for segment in re.split(r"[>/|.]", category_name) if segment.strip()]
         if not parts:
             return ""
         return parts[-1]
+
+    def get_session(self) -> requests.Session:
+        if self._session is None:
+            session = requests.Session()
+            session.headers.update(DEFAULT_HEADERS)
+            self._session = session
+        return self._session
+
+    def wait_for_request_slot(self) -> None:
+        if self.request_delay <= 0:
+            self._last_request_at = time.monotonic()
+            return
+        now = time.monotonic()
+        if self._last_request_at is not None:
+            remaining = self.request_delay - (now - self._last_request_at)
+            if remaining > 0:
+                time.sleep(remaining)
+                now = now + remaining
+        self._last_request_at = now
 
     def fetch_search_page(self, item_id: int, keyword: str) -> str:
         if self.fixture_dir:
@@ -71,10 +102,11 @@ class JDCandidateRecall:
                 self.shared_sample_hits += 1
                 return sample_fixture.read_text(encoding="utf-8")
 
-        response = requests.get(
+        self.wait_for_request_slot()
+        response = self.get_session().get(
             JD_SEARCH_URL,
             params={"keyword": keyword},
-            headers={"User-Agent": "Mozilla/5.0"},
+            headers={"Referer": f"{JD_SEARCH_URL}?keyword={keyword.replace(' ', '+')}"},
             timeout=self.timeout,
         )
         response.raise_for_status()
@@ -87,6 +119,10 @@ class JDCandidateRecall:
         debug_path = self.debug_dir / f"jd_search_debug_{item_id}_{safe_keyword[:40]}.html"
         debug_path.write_text(html, encoding="utf-8")
         return debug_path
+
+    def is_risk_page(self, html: str) -> bool:
+        lowered = (html or "").lower()
+        return "jdr_shields" in lowered or "risk_handler" in lowered or "privatedomain/risk_handler" in lowered
 
     def parse_search_results(
         self,
@@ -265,6 +301,8 @@ def main() -> None:
     for product in product_list:
         keyword = recall.build_keyword(product.brand, product.category_name)
         html = recall.fetch_search_page(product.item_id, keyword)
+        if recall.is_risk_page(html):
+            recall.risk_page_hits += 1
         candidates = recall.parse_search_results(
             html=html,
             brand_hint=product.brand,
@@ -301,10 +339,15 @@ def main() -> None:
         print(
             f"Notice: shared sample search page reused for {recall.shared_sample_hits} items; results are demo-only."
         )
+    if recall.risk_page_hits:
+        print(f"Risk-handler pages detected for {recall.risk_page_hits} products.")
     if debug_files:
         print(f"Saved {len(debug_files)} debug search pages to {debug_dir}")
     print(f"Candidate file: {output_path}")
     print("This script only generates candidate rows. Final mapping still requires scoring and human review.")
+    if not rows and recall.risk_page_hits:
+        print("Recall failed because live requests were blocked by the target site's risk-control page.")
+        raise SystemExit(2)
 
 
 if __name__ == "__main__":

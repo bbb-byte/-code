@@ -30,6 +30,7 @@ import java.util.stream.Stream;
 public class PublicTaskServiceImpl implements PublicTaskService {
 
     private static final long PYTHON_SCRIPT_TIMEOUT_SECONDS = 600;
+    private static final long NODE_SCRIPT_TIMEOUT_SECONDS = 1200;
 
     @Autowired
     private ProductPublicMetricService productPublicMetricService;
@@ -169,17 +170,31 @@ public class PublicTaskServiceImpl implements PublicTaskService {
             }
 
             updateProgress(status, 60D, "开始召回公网候选商品");
-            List<String> args = new ArrayList<>(Arrays.asList(
-                    "--products", effectiveProductPath,
-                    "--output", resolvedOutputPath,
-                    "--top-k", String.valueOf(topK),
-                    "--max-products", String.valueOf(maxProducts)));
-            if (resolvedFixtureDir != null && !resolvedFixtureDir.trim().isEmpty()) {
-                args.add("--fixture-dir");
-                args.add(resolvedFixtureDir);
+            ScriptExecution scriptExecution;
+            boolean useBrowserRecall = shouldUseBrowserRecall(workDir, resolvedFixtureDir);
+            if (useBrowserRecall) {
+                String frontendDir = workDir + "/frontend";
+                String browserScriptPath = frontendDir + "/scripts/jd-search-browser-recall.mjs";
+                scriptExecution = runNodeScript(
+                        frontendDir,
+                        browserScriptPath,
+                        "--products", toWorkspaceRelative(workDir, effectiveProductPath),
+                        "--output", toWorkspaceRelative(workDir, resolvedOutputPath),
+                        "--top-k", String.valueOf(topK),
+                        "--max-products", String.valueOf(maxProducts),
+                        "--headless", "false");
+            } else {
+                List<String> args = new ArrayList<>(Arrays.asList(
+                        "--products", effectiveProductPath,
+                        "--output", resolvedOutputPath,
+                        "--top-k", String.valueOf(topK),
+                        "--max-products", String.valueOf(maxProducts)));
+                if (resolvedFixtureDir != null && !resolvedFixtureDir.trim().isEmpty()) {
+                    args.add("--fixture-dir");
+                    args.add(resolvedFixtureDir);
+                }
+                scriptExecution = runPythonScript(workDir, scriptPath, args.toArray(new String[0]));
             }
-
-            ScriptExecution scriptExecution = runPythonScript(workDir, scriptPath, args.toArray(new String[0]));
             status.setLog(mergeLogs(status.getLog(), scriptExecution.output));
             if (scriptExecution.exitCode != 0) {
                 failTask(status, "候选召回失败: " + scriptExecution.output);
@@ -201,6 +216,7 @@ public class PublicTaskServiceImpl implements PublicTaskService {
             result.put("topK", topK);
             result.put("maxProducts", maxProducts);
             result.put("candidateRows", candidateRows);
+            result.put("recallMode", useBrowserRecall ? "jd_browser_search" : "jd_search");
             completeTask(status, "公网映射候选召回完成", result);
         } catch (Exception e) {
             log.error("公网映射候选召回任务异常", e);
@@ -324,6 +340,44 @@ public class PublicTaskServiceImpl implements PublicTaskService {
         return new ScriptExecution(exitCode, finished, output.toString());
     }
 
+    private String resolveNodeCommand() {
+        String nodeCmd = "node";
+        try {
+            new ProcessBuilder(nodeCmd, "--version").start().waitFor();
+        } catch (Exception e) {
+            nodeCmd = "node.exe";
+        }
+        return nodeCmd;
+    }
+
+    private ScriptExecution runNodeScript(String workDir, String scriptPath, String... args)
+            throws IOException, InterruptedException {
+        List<String> command = new ArrayList<>();
+        command.add(resolveNodeCommand());
+        command.add(scriptPath);
+        command.addAll(Arrays.asList(args));
+
+        ProcessBuilder pb = new ProcessBuilder(command);
+        pb.directory(new File(workDir));
+        pb.redirectErrorStream(true);
+
+        Process process = pb.start();
+        StringBuilder output = new StringBuilder();
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                output.append(line).append("\n");
+            }
+        }
+
+        boolean finished = process.waitFor(NODE_SCRIPT_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+        int exitCode = finished ? process.exitValue() : -1;
+        if (!finished) {
+            process.destroyForcibly();
+        }
+        return new ScriptExecution(exitCode, finished, output.toString());
+    }
+
     private long countDataRows(String csvPath) throws IOException {
         Path path = Path.of(csvPath);
         if (!Files.exists(path)) {
@@ -353,6 +407,27 @@ public class PublicTaskServiceImpl implements PublicTaskService {
             current = current.getCause();
         }
         return false;
+    }
+
+    private boolean shouldUseBrowserRecall(String workDir, String fixtureDir) {
+        if (fixtureDir != null && !fixtureDir.trim().isEmpty()) {
+            return false;
+        }
+        File profileDir = new File(workDir, "frontend/.jd-edge-profile");
+        File browserScript = new File(workDir, "frontend/scripts/jd-search-browser-recall.mjs");
+        return profileDir.exists() && browserScript.exists();
+    }
+
+    private String toWorkspaceRelative(String workDir, String absolutePath) {
+        if (absolutePath == null || absolutePath.trim().isEmpty()) {
+            return absolutePath;
+        }
+        Path workPath = Path.of(workDir).toAbsolutePath().normalize();
+        Path targetPath = Path.of(absolutePath).toAbsolutePath().normalize();
+        if (!targetPath.startsWith(workPath)) {
+            return absolutePath;
+        }
+        return workPath.relativize(targetPath).toString().replace("\\", "/");
     }
 
     private String mergeLogs(String first, String second) {
