@@ -28,6 +28,9 @@
               <el-button type="warning" @click="handleCrawl" :loading="crawling" plain>
                 <el-icon><Search /></el-icon> 采集公网满意度指标
               </el-button>
+              <el-button type="success" @click="handleAttachedSearchCrawl" :loading="crawling" plain>
+                <el-icon><Search /></el-icon> 附着当前搜索页采集
+              </el-button>
             </div>
             <div v-if="crawlResult" class="crawl-info">
               <el-alert
@@ -151,7 +154,7 @@
           <div class="flow-tips">
             <ol>
               <li>1. 在上方“数据导入”里先导入 `archive` / Kaggle 行为数据，完成主分析数据入库</li>
-          <li>2. 在这里填写“原始行为文件”路径，例如 `archive/2019-Nov-demo.csv`；如果你已经有商品快照，也可以直接填写“商品快照”路径</li>
+          <li>2. 在这里填写“原始行为文件”路径，例如 `archive/2020-Apr-demo.csv`；如果你已经有商品快照，也可以直接填写“商品快照”路径</li>
               <li>3. 点击“召回候选商品”，系统会先自动生成商品快照，再输出候选商品文件</li>
               <li>4. 点击“计算映射分数”，生成评分结果预览</li>
               <li>5. 在评分预览里检查候选商品，必要时点“编辑”修改标题、置信度、核验说明和证据备注</li>
@@ -544,6 +547,7 @@ import {
   stopImport,
   analyzeData,
   crawlData,
+  crawlAttachedSearchData,
   getLatestBehaviors,
   recallPublicMappingCandidates,
   scorePublicMappingCandidates,
@@ -588,7 +592,7 @@ const scoreEditDialogVisible = ref(false)
 const editingScoreRow = ref(null)
 
 const importForm = reactive({
-  filePath: '/Users/leiminghao/Desktop/论文code/-code/archive/2019-Nov-demo.csv',
+  filePath: 'archive/2020-Apr-demo.csv',
   batchSize: 5000,
   maxRows: 100000
 })
@@ -599,12 +603,12 @@ const analyzeForm = reactive({
 
 const mappingForm = reactive({
   sourceDataPath: 'archive/2020-Apr-demo.csv',
-  productPath: 'crawler/mappings/internal_products.sample.csv',
+  productPath: 'crawler/output/internal_products.auto.csv',
   generatedProductPath: 'crawler/output/internal_products.auto.csv',
   fixtureDir: '',
   topK: 5,
   maxProducts: 50,
-  candidateOutputPath: 'crawler/output/recalled_candidates.csv',
+  candidateOutputPath: 'crawler/output/recalled_candidates.browser.csv',
   scoreOutputPath: 'crawler/output/recalled_candidate_scores.csv'
 })
 
@@ -658,9 +662,9 @@ const handleCrawl = async () => {
   
   try {
     const res = await crawlData(
-      'crawler/mappings/product_public_mapping.jd.sample.csv',
+      '',
       'crawler/output',
-      'crawler/fixtures'
+      ''
     )
     lastStartedTaskId.value = res.data.taskId || ''
     currentPublicTask.value = {
@@ -688,6 +692,46 @@ const handleCrawl = async () => {
     })
   } catch (error) {
     addLog('采集失败: ' + (error.response?.data?.message || error.message), 'danger')
+    crawling.value = false
+  }
+}
+
+const handleAttachedSearchCrawl = async () => {
+  crawling.value = true
+  addLog('开始附着当前已打开的京东搜索页采集公网指标...', 'warning')
+
+  try {
+    const res = await crawlAttachedSearchData(
+      mappingForm.candidateOutputPath,
+      'crawler/output/jd_search_browser_metrics_attached.csv',
+      'http://127.0.0.1:9222'
+    )
+    lastStartedTaskId.value = res.data.taskId || ''
+    currentPublicTask.value = {
+      taskId: res.data.taskId,
+      taskType: 'crawl_attached_search',
+      running: true,
+      progress: 1,
+      status: 'running',
+      message: '附着搜索页公网指标采集任务已启动'
+    }
+    addLog(`附着搜索页公网指标采集任务已启动，任务ID: ${res.data.taskId}`, 'primary')
+    pollPublicTask(res.data.taskId, {
+      onSuccess: (task) => {
+        crawlResult.value = task.result || {}
+        const imported = task.result?.importedRows ?? '部分'
+        addLog(`附着搜索页公网指标采集完成，输出 ${imported} 条商品指标，并已尝试回写数据库。`, 'success')
+        ElMessage.success(`成功附着搜索页采集 ${imported} 条公网商品指标`)
+      },
+      onFailed: (task) => {
+        addLog('附着搜索页采集失败: ' + (task.message || '任务执行失败'), 'danger')
+      },
+      onFinally: () => {
+        crawling.value = false
+      }
+    })
+  } catch (error) {
+    addLog('附着搜索页采集失败: ' + (error.response?.data?.message || error.message), 'danger')
     crawling.value = false
   }
 }

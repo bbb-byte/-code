@@ -29,6 +29,12 @@ export function crawlData(mappingPath, outputDir, fixtureDir) {
     })
 }
 
+export function crawlAttachedSearchData(candidatePath, outputPath, cdpUrl = 'http://127.0.0.1:9222') {
+    return http.post('/data/crawl-attached-search', null, {
+        params: { candidatePath, outputPath, cdpUrl }
+    })
+}
+
 // 召回公网映射候选商品
 export function recallPublicMappingCandidates(productPath, outputPath, fixtureDir, sourceDataPath = '', generatedProductPath = '', topK = 5, maxProducts = 50) {
     return http.post('/data/public-mapping/recall', null, {

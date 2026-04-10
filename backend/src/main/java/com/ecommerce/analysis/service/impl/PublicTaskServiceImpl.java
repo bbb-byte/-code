@@ -352,11 +352,11 @@ public class PublicTaskServiceImpl implements PublicTaskService {
     }
 
     private String resolvePythonCommand() {
-        String pythonCmd = "python3";
+        String pythonCmd = "python";
         try {
             new ProcessBuilder(pythonCmd, "--version").start().waitFor();
         } catch (Exception e) {
-            pythonCmd = "python";
+            pythonCmd = "python3";
         }
         return pythonCmd;
     }
