@@ -352,13 +352,7 @@ public class PublicTaskServiceImpl implements PublicTaskService {
     }
 
     private String resolvePythonCommand() {
-        String pythonCmd = "python";
-        try {
-            new ProcessBuilder(pythonCmd, "--version").start().waitFor();
-        } catch (Exception e) {
-            pythonCmd = "python3";
-        }
-        return pythonCmd;
+        return "C:\\Users\\86186\\anaconda3\\python.exe";
     }
 
     private String defaultIfBlank(String value, String fallback) {

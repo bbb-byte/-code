@@ -335,23 +335,34 @@ def main() -> None:
         rows: List[Dict[str, object]] = []
         debug_files: List[Path] = []
         total = len(product_list)
+        keyword_cache: Dict[str, List] = {}
+
         for idx, product in enumerate(product_list, start=1):
             keyword = recall.build_keyword(product.brand, product.category_name)
-            logger.info("搜索进度 %d/%d — keyword='%s'", idx, total, keyword)
-            html = recall.fetch_search_page(product.item_id, keyword)
-            if recall.is_risk_page(html):
-                recall.risk_page_hits += 1
-                logger.warning("商品 %s 搜索被风控拦截", product.item_id)
-            candidates = recall.parse_search_results(
-                html=html,
-                brand_hint=product.brand,
-                category_hint=product.category_name,
-                top_k=args.top_k,
-            )
-            if not candidates:
-                debug_path = recall.save_debug_html(product.item_id, keyword, html)
-                if debug_path:
-                    debug_files.append(debug_path)
+            
+            if keyword in keyword_cache:
+                logger.info("搜索进度 %d/%d — keyword='%s' (使用缓存，跳过抓取)", idx, total, keyword)
+                candidates = keyword_cache[keyword]
+            else:
+                logger.info("搜索进度 %d/%d — keyword='%s'", idx, total, keyword)
+                html = recall.fetch_search_page(product.item_id, keyword)
+                if recall.is_risk_page(html):
+                    recall.risk_page_hits += 1
+                    logger.warning("商品 %s 搜索被风控拦截", product.item_id)
+                candidates = recall.parse_search_results(
+                    html=html,
+                    brand_hint=product.brand,
+                    category_hint=product.category_name,
+                    top_k=args.top_k,
+                )
+                keyword_cache[keyword] = candidates
+
+                if not candidates:
+                    debug_path = recall.save_debug_html(product.item_id, keyword, html)
+                    if debug_path:
+                        debug_files.append(debug_path)
+                recall._random_sleep()
+
             for candidate in candidates:
                 rows.append(
                     {
@@ -368,7 +379,6 @@ def main() -> None:
                         "candidate_source": "jd_search",
                     }
                 )
-            recall._random_sleep()
 
         write_rows(output_path, rows)
         print(f"Loaded {len(products)} internal products.")
