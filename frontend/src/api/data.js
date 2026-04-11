@@ -84,6 +84,13 @@ export function getPublicTaskProgress(taskId) {
     })
 }
 
+// 取消公网任务
+export function cancelPublicTask(taskId) {
+    return http.post('/data/public-task/cancel', null, {
+        params: { taskId }
+    })
+}
+
 // 获取最新行为记录
 export function getLatestBehaviors(limit = 10) {
     return http.get('/data/latest', { params: { limit } })

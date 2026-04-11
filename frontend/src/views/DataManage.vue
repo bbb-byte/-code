@@ -286,12 +286,25 @@
         <div class="task-message">
           {{ currentPublicTask?.message || '任务已启动，前端正在轮询进度；如果长时间不更新，请刷新页面并确认前后端已重启到最新版本。' }}
         </div>
-        <el-progress
-          :percentage="Math.max(0, Math.min(100, Number(currentPublicTask?.progress || 5)))"
-          :status="currentPublicTask
-            ? (currentPublicTask.running ? '' : (currentPublicTask.status === 'success' ? 'success' : 'exception'))
-            : ''"
-        />
+        <div style="display: flex; align-items: center; gap: 12px;">
+          <el-progress
+            :percentage="Math.max(0, Math.min(100, Number(currentPublicTask?.progress || 5)))"
+            :status="currentPublicTask
+              ? (currentPublicTask.running ? '' : (currentPublicTask.status === 'success' ? 'success' : 'exception'))
+              : ''"
+            style="flex: 1;"
+          />
+          <el-button
+            v-if="currentPublicTask?.running"
+            type="danger"
+            size="small"
+            plain
+            @click="handleCancelTask"
+            :loading="cancellingTask"
+          >
+            <el-icon><VideoPause /></el-icon> 取消
+          </el-button>
+        </div>
       </div>
       <div class="mapping-preview">
         <div class="mapping-preview-header">
@@ -555,7 +568,8 @@ import {
   confirmPublicMappings,
   getLatestPublicMappings,
   removePublicMapping,
-  getPublicTaskProgress
+  getPublicTaskProgress,
+  cancelPublicTask
 } from '@/api/data'
 import { getOverview } from '@/api/analysis'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -571,6 +585,7 @@ const confirmingMappings = ref(false)
 const loadingConfirmedMappings = ref(false)
 const loadingLatest = ref(false)
 const removingMappingId = ref(null)
+const cancellingTask = ref(false)
 const importProgress = ref(0)
 const importStatus = ref(createEmptyImportStatus())
 const crawlResult = ref(null)
@@ -838,6 +853,23 @@ const clearPublicTaskTimer = () => {
   if (publicTaskTimer) {
     clearInterval(publicTaskTimer)
     publicTaskTimer = null
+  }
+}
+
+const handleCancelTask = async () => {
+  const taskId = currentPublicTask.value?.taskId || lastStartedTaskId.value
+  if (!taskId) return
+
+  cancellingTask.value = true
+  try {
+    await cancelPublicTask(taskId)
+    addLog('已发送取消信号，任务将在当前搜索完成后停止', 'warning')
+    ElMessage.warning('已发送取消信号，任务将在当前搜索完成后停止')
+  } catch (error) {
+    addLog('取消失败: ' + (error.response?.data?.message || error.message), 'danger')
+    ElMessage.error('取消失败')
+  } finally {
+    cancellingTask.value = false
   }
 }
 

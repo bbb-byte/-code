@@ -79,32 +79,69 @@ class JDPublicSatisfactionCrawler:
         self.headless = headless
         self.browser: Optional[Chromium] = None
         self.browser_path = browser_path
+        self._owns_browser = False
 
     # ------------------------------------------------------------------
     # Browser management
     # ------------------------------------------------------------------
 
     def _init_browser(self) -> None:
-        """初始化浏览器，强制使用 Chrome 并用独立调试端口。"""
+        """初始化浏览器：复用已登录京东的调试 Chrome。
+        
+        1. 优先连接已运行的 Chrome（CDP 端口 9222）
+        2. 如果没有，自动启动带调试端口的 Chrome（使用 Debug Profile 保存登录态）
+        """
         if self.fixture_dir:
             return
+
+        debug_profile_dir = str(Path.home() / "AppData" / "Local" / "Google" / "Chrome" / "Debug Profile")
+
+        # 第一步：尝试连接已有的调试 Chrome
+        try:
+            co = ChromiumOptions()
+            co.set_local_port(9222)
+            self.browser = Chromium(co)
+            self._owns_browser = False
+            logger.info("✓ 已接管现有 Chrome 浏览器（端口 9222）")
+            return
+        except Exception:
+            logger.info("未检测到已运行的调试 Chrome，正在自动启动...")
+
+        # 第二步：自动启动带调试端口的 Chrome
+        try:
+            co = ChromiumOptions()
+            browser = self.browser_path or r"C:\Program Files\Google\Chrome\Application\chrome.exe"
+            co.set_browser_path(browser)
+            co.set_local_port(9222)
+            co.set_user_data_path(debug_profile_dir)
+            if self.headless:
+                co.headless()
+            self.browser = Chromium(co)
+            self._owns_browser = True
+            logger.info("✓ 已自动启动 Chrome（端口 9222，Debug Profile）")
+            logger.info("  首次使用请在浏览器中登录京东")
+            return
+        except Exception as e:
+            logger.warning("自动启动 Chrome 失败: %s，回退到独立模式", e)
+
+        # 回退：独立 Chrome
         co = ChromiumOptions()
-        # 强制使用 Chrome
         browser = self.browser_path or r"C:\Program Files\Google\Chrome\Application\chrome.exe"
         co.set_browser_path(browser)
-        # 用固定调试端口，避免 auto_port 连到已有的 Edge 上
         co.set_local_port(19222)
-        # 使用独立的用户数据目录，避免和正在用的 Chrome 冲突
-        co.set_user_data_path(str(Path(__file__).resolve().parent / ".chrome_profile"))
+        co.set_user_data_path(debug_profile_dir)
         if self.headless:
             co.headless()
         self.browser = Chromium(co)
-        logger.info("Chrome 浏览器已初始化 (%s)", browser)
+        logger.info("Chrome 浏览器已独立启动（端口 19222）")
 
     def _close_browser(self) -> None:
         if self.browser:
             try:
-                self.browser.quit()
+                if self._owns_browser:
+                    self.browser.quit()
+                else:
+                    logger.info("保持用户的 Chrome 浏览器不关闭")
             except Exception:
                 pass
 
@@ -220,7 +257,13 @@ class JDPublicSatisfactionCrawler:
         return json.loads(raw)
 
     def fetch_comment_summary_via_browser(self, row: MappingRow) -> Dict[str, object]:
-        """通过真实浏览器访问商品页，监听评论 API 响应来获取数据。"""
+        """通过真实浏览器访问商品页，提取评价数据。
+
+        策略：
+        1. 监听多种评论 API（旧版 club.jd.com + 新版 api.m.jd.com）
+        2. 同时滚动页面、点击"大家评"标签触发数据加载
+        3. 如果 API 没捕到，从 DOM 直接解析
+        """
         if self.fixture_dir:
             fixture_path = self.fixture_dir / f"{row.source_product_id}.json"
             if fixture_path.exists():
@@ -231,70 +274,192 @@ class JDPublicSatisfactionCrawler:
 
         tab = self.browser.latest_tab
 
-        # 开始监听评论 API 的网络响应
-        tab.listen.start(JD_COMMENT_SUMMARY_URL)
+        # 同时监听新旧两种评论 API
+        tab.listen.start([JD_COMMENT_SUMMARY_URL, "api.m.jd.com"])
 
         # 访问商品页
         tab.get(row.source_url)
-        tab.wait(2)
+        tab.wait(3)
 
-        # 滚动到评论区以触发异步加载
+        # 滚动页面触发异步加载
+        tab.run_js("window.scrollBy(0, 600)")
+        tab.wait(1)
+        # 尝试点击"大家评"标签页
+        try:
+            comment_tab = (
+                tab.ele('text:大家评', timeout=3)
+                or tab.ele('text:商品评价', timeout=2)
+                or tab.ele('text:评价', timeout=2)
+            )
+            if comment_tab:
+                comment_tab.click()
+                tab.wait(2)
+                logger.debug("已点击评论标签")
+        except Exception:
+            pass
+
+        # 旧方式：尝试滚动到 #comment
         tab.run_js("document.getElementById('comment') && document.getElementById('comment').scrollIntoView()")
         tab.wait(1)
 
-        # 等待并捕获评论 API 响应（最多等 15 秒）
+        # 捕获 API 响应（短超时，因为新版页面可能不走这些 API）
         summary = {}
         try:
-            packet = tab.listen.wait(timeout=self.timeout)
+            packet = tab.listen.wait(timeout=5)
             if packet and packet.response and packet.response.body:
                 body = packet.response.body
                 if isinstance(body, bytes):
                     body = body.decode("utf-8", errors="replace")
                 try:
                     payload = self._parse_jsonp(body)
+                    # 旧版 API
                     summaries = payload.get("CommentsCount") or payload.get("productCommentSummaries") or payload.get("productCommentSummary") or []
                     if isinstance(summaries, list) and summaries:
                         summary = summaries[0]
-                        logger.info("通过网络监听获取到评论摘要")
+                        logger.info("通过网络监听获取到评论摘要 (旧版API)")
+                    # 新版 API
+                    elif "commentInfo" in payload:
+                        comment_info = payload["commentInfo"]
+                        summary = {
+                            "goodRate": comment_info.get("goodRate"),
+                            "commentCount": comment_info.get("commentCount"),
+                        }
+                        logger.info("通过网络监听获取到评论摘要 (新版API)")
                 except (json.JSONDecodeError, ValueError) as e:
-                    logger.warning("解析评论 API 响应失败: %s", e)
+                    logger.debug("解析评论 API 响应失败: %s", e)
         except Exception as e:
-            logger.warning("未捕获到评论 API 响应: %s", e)
+            logger.debug("未捕获到评论 API 响应: %s", e)
         finally:
             tab.listen.stop()
 
-        # 如果网络监听没拿到，尝试从 DOM 解析
+        # 如果 API 没拿到，从 DOM 解析
         if not summary:
             summary = self._extract_from_dom(tab)
 
         return summary
 
     def _extract_from_dom(self, tab) -> Dict[str, object]:
-        """从 DOM 解析评论数据（作为网络监听的备用方案）。"""
+        """从页面可见文本动态提取评论数据。
+
+        核心设计：
+        - 不依赖任何 CSS class、HTML 标签或 DOM 结构
+        - 用 JavaScript 提取 document.body.innerText（纯可见文本）
+        - 在纯文本上做模式匹配，京东无论怎么改版结构，用户看到的文字是相对稳定的
+        - 每种指标有多个候选正则，优先级从高到低尝试
+        """
         summary = {}
-        html = tab.html
 
-        # 好评率
-        match = re.search(r"好评率[：:\s]*([0-9]+(?:\.[0-9]+)?)%", html)
-        if match:
-            summary["goodRateShow"] = float(match.group(1))
+        # 第一步：用 JS 获取页面纯可见文本（不含 HTML 标签）
+        visible_text = ""
+        try:
+            visible_text = tab.run_js("return document.body.innerText") or ""
+        except Exception:
+            visible_text = ""
 
-        # 评论数
-        match = re.search(r"(\d[\d,]*)\s*条?评", html)
-        if match:
-            count_str = match.group(1).replace(",", "")
-            summary["commentCount"] = int(count_str)
+        # 兜底：如果 innerText 为空则回退到 html
+        if not visible_text.strip():
+            visible_text = tab.html or ""
+            # 粗略去标签
+            visible_text = re.sub(r"<[^>]+>", " ", visible_text)
+            visible_text = re.sub(r"\s+", " ", visible_text)
 
-        # 好评/中评/差评数
+        logger.debug("页面文本长度: %d 字符", len(visible_text))
+
+        # 第二步：在纯文本上匹配各项指标
+
+        # —— 好评率 ——
+        # 可能出现的文字格式：
+        #   "好评度 98%"  "好评率：98%"  "好评度98%"
+        #   "超99%买家赞不绝口"  "98%好评"
+        rate_patterns = [
+            r"好评[度率]\s*[:：]?\s*([0-9]+(?:\.[0-9]+)?)\s*%",
+            r"超\s*([0-9]+(?:\.[0-9]+)?)\s*%\s*(?:买家|好评)",
+            r"([0-9]{2,3}(?:\.[0-9]+)?)\s*%\s*好评",
+        ]
+        for pattern in rate_patterns:
+            m = re.search(pattern, visible_text)
+            if m:
+                summary["goodRateShow"] = float(m.group(1))
+                break
+
+        # —— 评论/评价总数 ——
+        # 可能出现的文字格式：
+        #   "累计评价 2万+"  "累计评价2万+"  "评价 20000+"
+        #   "评论(2万+)"  "全部评价(3.5万+)"  "1234条评价"
+        #   "2万+条评论"  "共 2000 条评价"
+        count_patterns = [
+            (r"累计评[价论]\s*[:：]?\s*([\d.]+)\s*万\s*\+?", True),       # 万为单位
+            (r"([\d.]+)\s*万\s*\+?\s*条?\s*评[价论]", True),              # "2万+条评价"
+            (r"(?:评[价论]|评分)\s*[（(]\s*([\d.]+)\s*万\s*\+?\s*[）)]", True),   # "评价(2万+)"
+            (r"(?:评[价论]|评分)\s*[（(]\s*(\d[\d,]*)\s*\+?\s*[）)]", False),     # "评价(2000)"
+            (r"共?\s*(\d[\d,]*)\s*条?\s*评[价论]", False),                # "共 2000 条评价"
+            (r"(\d[\d,]*)\s*条\s*评", False),                             # "1234条评"
+        ]
+        for pattern, is_wan in count_patterns:
+            m = re.search(pattern, visible_text)
+            if m:
+                num = float(m.group(1).replace(",", ""))
+                if is_wan:
+                    num *= 10000
+                summary["commentCount"] = int(num)
+                break
+
+        # —— 好评/中评/差评数 ——
         for label, key in [("好评", "goodCount"), ("中评", "generalCount"), ("差评", "poorCount")]:
-            match = re.search(rf"{label}\s*[（(]?\s*(\d[\d,]*)\s*[）)]?", html)
-            if match:
-                summary[key] = int(match.group(1).replace(",", ""))
+            # "好评(1.9万+)" 或 "好评 1234"
+            m = re.search(rf"{label}\s*[（(]\s*([\d.]+)\s*万?\s*\+?\s*[）)]", visible_text)
+            if m:
+                num = float(m.group(1))
+                if "万" in m.group(0):
+                    num *= 10000
+                summary[key] = int(num)
+
+        # —— 店铺评分 ——
+        # "店铺评分 4.9" 或 "评分：4.9" 或 "商品评分 4.85"
+        score_patterns = [
+            r"(?:店铺|商品|商家)\s*评分\s*[:：]?\s*([0-9]+(?:\.[0-9]+)?)",
+            r"评分\s*[:：]?\s*([0-4]\.[0-9]+|5\.0{0,2})",  # 0.0-5.0 范围
+        ]
+        for pattern in score_patterns:
+            m = re.search(pattern, visible_text)
+            if m:
+                score = float(m.group(1))
+                if 0 < score <= 5.0:
+                    summary["score"] = score
+                    break
+
+        # —— 推导：有好评数和总数但不知道率 ——
+        if "goodRateShow" not in summary and "goodCount" in summary and "commentCount" in summary:
+            total = summary["commentCount"]
+            if total > 0:
+                summary["goodRateShow"] = round(summary["goodCount"] / total * 100, 1)
 
         if summary:
-            logger.info("从 DOM 解析出评论数据: %s", list(summary.keys()))
+            logger.info("从页面文本动态提取到: %s", {k: v for k, v in summary.items()})
+        else:
+            logger.warning("页面文本中未匹配到任何评论数据")
+            # 保存原始文本用于调试
+            self._save_debug_text(tab, visible_text)
 
         return summary
+
+    def _save_debug_text(self, tab, visible_text: str) -> None:
+        """保存页面文本用于调试（当提取失败时）。"""
+        try:
+            debug_dir = Path(__file__).resolve().parent / "output" / "debug"
+            debug_dir.mkdir(parents=True, exist_ok=True)
+            url = tab.url or "unknown"
+            product_id = re.search(r"/(\d+)\.html", url)
+            name = product_id.group(1) if product_id else "unknown"
+            # 保存可见文本
+            text_path = debug_dir / f"page_text_{name}.txt"
+            text_path.write_text(visible_text[:50000], encoding="utf-8")
+            # 保存 HTML
+            html_path = debug_dir / f"page_html_{name}.html"
+            html_path.write_text(tab.html[:200000] if tab.html else "", encoding="utf-8")
+            logger.info("已保存调试文件: %s", text_path)
+        except Exception as e:
+            logger.debug("保存调试文件失败: %s", e)
 
     # ------------------------------------------------------------------
     # Metrics extraction

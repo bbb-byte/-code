@@ -17,4 +17,6 @@ public interface PublicTaskService {
     String startScoreTask(String productPath, String candidatePath, String outputPath);
 
     PublicTaskStatusVO getTaskStatus(String taskId);
+
+    boolean cancelTask(String taskId);
 }

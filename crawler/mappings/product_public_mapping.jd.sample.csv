@@ -1,3 +1,0 @@
-item_id,source_platform,source_product_id,source_url,mapping_confidence,verification_note,evidence_note
-10000001,jd,10000001,https://item.jd.com/10000001.html,manual,人工核对商品页与内部品牌/价格相符,示例映射-请替换为真实人工核验结果
-10000002,jd,10000002,https://item.jd.com/10000002.html,reviewed,人工复核商品页标题与内部类目一致,示例映射-请替换为真实人工核验结果

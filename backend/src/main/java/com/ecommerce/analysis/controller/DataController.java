@@ -155,6 +155,18 @@ public class DataController {
         return Result.success(publicTaskService.getTaskStatus(taskId));
     }
 
+    @ApiOperation("取消公网任务")
+    @PostMapping("/public-task/cancel")
+    public Result<Map<String, Object>> cancelPublicTask(@RequestParam String taskId) {
+        boolean success = publicTaskService.cancelTask(taskId);
+        Map<String, Object> result = new HashMap<>();
+        result.put("cancelled", success);
+        result.put("taskId", taskId);
+        return success
+                ? Result.success("已发送取消信号，任务将在当前搜索完成后停止", result)
+                : Result.error("无法取消任务：任务不存在或已结束");
+    }
+
     @ApiOperation("预览公网映射评分结果")
     @GetMapping("/public-mapping/score-preview")
     public Result<PublicMappingScorePreviewVO> previewPublicMappingScore(

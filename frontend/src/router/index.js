@@ -89,6 +89,7 @@ router.beforeEach((to, from, next) => {
             return
         }
 
+        ElMessage.warning('请先登录后再访问')
         next({
             path: '/login',
             query: { redirect: to.fullPath }

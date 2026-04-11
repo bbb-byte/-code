@@ -14,6 +14,7 @@ import java.io.IOException;
 import java.io.InputStreamReader;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.sql.SQLSyntaxErrorException;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -31,7 +32,6 @@ public class PublicTaskServiceImpl implements PublicTaskService {
 
     private static final long PYTHON_SCRIPT_TIMEOUT_SECONDS = 600;
     private static final long NODE_SCRIPT_TIMEOUT_SECONDS = 1200;
-
     @Autowired
     private ProductPublicMetricService productPublicMetricService;
 
@@ -83,6 +83,27 @@ public class PublicTaskServiceImpl implements PublicTaskService {
             return missing;
         }
         return status;
+    }
+
+    @Override
+    public boolean cancelTask(String taskId) {
+        PublicTaskStatusVO status = tasks.get(taskId);
+        if (status == null || !status.isRunning()) {
+            return false;
+        }
+        // 写入取消信号文件，Python 脚本会在下一个循环检测并退出
+        try {
+            String workDir = resolveWorkDir();
+            Path signalPath = Paths.get(workDir, "crawler", "output", ".cancel_signal");
+            Files.createDirectories(signalPath.getParent());
+            Files.write(signalPath, "cancel".getBytes());
+            log.info("已写入取消信号文件: {}", signalPath);
+            status.setMessage("正在取消任务...");
+            return true;
+        } catch (IOException e) {
+            log.error("写入取消信号文件失败", e);
+            return false;
+        }
     }
 
     private String createTask(String taskType, String message) {
@@ -146,7 +167,7 @@ public class PublicTaskServiceImpl implements PublicTaskService {
             result.put("importedMappings", importedMappings);
             result.put("importedRows", importedRows);
             completeTask(status, "公网满意度采集完成", result);
-        } catch (Exception e) {
+        } catch (Throwable e) {
             if (isPublicMetricSchemaMissing(e)) {
                 failTask(status, "公网满意度相关数据表不存在，请先执行 backend/src/main/resources/sql/upgrade_archive_dataset.sql 或重新初始化数据库");
                 return;
@@ -219,7 +240,7 @@ public class PublicTaskServiceImpl implements PublicTaskService {
             result.put("candidateRows", candidateRows);
             result.put("recallMode", "jd_search");
             completeTask(status, "公网映射候选召回完成", result);
-        } catch (Exception e) {
+        } catch (Throwable e) {
             log.error("公网映射候选召回任务异常", e);
             failTask(status, "执行候选召回异常: " + e.getMessage());
         }
@@ -256,7 +277,7 @@ public class PublicTaskServiceImpl implements PublicTaskService {
             result.put("outputFile", resolvedOutputPath);
             result.put("scoreRows", scoreRows);
             completeTask(status, "公网映射评分完成", result);
-        } catch (Exception e) {
+        } catch (Throwable e) {
             log.error("公网映射评分任务异常", e);
             failTask(status, "执行映射评分异常: " + e.getMessage());
         }
@@ -300,7 +321,7 @@ public class PublicTaskServiceImpl implements PublicTaskService {
             result.put("importedRows", importedRows);
             result.put("metricRows", metricRows);
             completeTask(status, "附着搜索页公网指标采集完成", result);
-        } catch (Exception e) {
+        } catch (Throwable e) {
             if (isPublicMetricSchemaMissing(e)) {
                 failTask(status, "公网满意度相关数据表不存在，请先执行 backend/src/main/resources/sql/upgrade_archive_dataset.sql 或重新初始化数据库");
                 return;
@@ -429,7 +450,7 @@ public class PublicTaskServiceImpl implements PublicTaskService {
     }
 
     private long countDataRows(String csvPath) throws IOException {
-        Path path = Path.of(csvPath);
+        Path path = Paths.get(csvPath);
         if (!Files.exists(path)) {
             return 0;
         }
@@ -464,8 +485,8 @@ public class PublicTaskServiceImpl implements PublicTaskService {
         if (absolutePath == null || absolutePath.trim().isEmpty()) {
             return absolutePath;
         }
-        Path workPath = Path.of(workDir).toAbsolutePath().normalize();
-        Path targetPath = Path.of(absolutePath).toAbsolutePath().normalize();
+        Path workPath = Paths.get(workDir).toAbsolutePath().normalize();
+        Path targetPath = Paths.get(absolutePath).toAbsolutePath().normalize();
         if (!targetPath.startsWith(workPath)) {
             return absolutePath;
         }

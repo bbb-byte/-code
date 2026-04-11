@@ -47,6 +47,7 @@
               inline-prompt
               active-text="只看已补充"
               inactive-text="查看全部"
+              :disabled="metricLoading"
               @change="handleMetricFilterChange"
             />
           </div>
@@ -125,6 +126,7 @@ const metricPageSize = ref(10)
 const metricTotal = ref(0)
 const metricPageCount = ref(1)
 const metricOnlyWithMetrics = ref(true)
+const metricLoading = ref(false)
 
 const loadData = async () => {
   try {
@@ -155,18 +157,42 @@ const loadData = async () => {
 
 const handleMetricPageChange = (page) => {
   metricPage.value = page
-  loadData()
+  loadMetricData()
 }
 
 const handleMetricPageSizeChange = (pageSize) => {
   metricPageSize.value = pageSize
   metricPage.value = 1
-  loadData()
+  loadMetricData()
 }
 
-const handleMetricFilterChange = () => {
+const handleMetricFilterChange = async () => {
+  if (metricLoading.value) return
   metricPage.value = 1
-  loadData()
+  await loadMetricData()
+}
+
+const loadMetricData = async () => {
+  if (metricLoading.value) return
+  metricLoading.value = true
+  try {
+    const metricRes = await getHotProductsWithPublicMetrics(metricPage.value, metricPageSize.value, metricOnlyWithMetrics.value)
+    const metricPayload = metricRes.data || {}
+    metricTotal.value = Number(metricPayload.total || 0)
+    metricPageCount.value = Math.max(1, Math.ceil(metricTotal.value / metricPageSize.value))
+    metricRows.value = (metricPayload.rows || []).map(item => ({
+      ...item,
+      productLabel: productLabel(item),
+      positive_rate: item.positive_rate ?? null,
+      review_count: item.review_count ?? null,
+      shop_score: item.shop_score ?? null,
+      crawl_status: item.crawl_status || 'pending'
+    }))
+  } catch (error) {
+    console.error('加载满意度指标失败:', error)
+  } finally {
+    metricLoading.value = false
+  }
 }
 
 const productLabel = (item) => {

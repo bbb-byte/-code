@@ -1,3 +1,0 @@
-item_id,source_platform,source_product_id,source_url,mapping_confidence,verification_note,evidence_note
-1001588,jd,10192521777683,https://item.jd.com/10192521777683.html,reviewed,real crawl check,row from recalled_candidates.browser.csv
-1002098,jd,10215516579046,https://item.jd.com/10215516579046.html,reviewed,real crawl check,row from recalled_candidates.browser.csv

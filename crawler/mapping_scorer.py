@@ -215,9 +215,9 @@ def evidence_score(candidate: CandidateProduct) -> float:
 
 
 def recommend_action(total_score: float) -> str:
-    if total_score >= 0.90:
+    if total_score >= 0.60:
         return "fast_review"
-    if total_score >= 0.75:
+    if total_score >= 0.40:
         return "manual_review"
     return "reject"
 

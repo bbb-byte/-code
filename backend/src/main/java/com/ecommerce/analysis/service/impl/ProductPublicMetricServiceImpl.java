@@ -17,6 +17,7 @@ import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.time.format.DateTimeParseException;
@@ -49,7 +50,7 @@ public class ProductPublicMetricServiceImpl implements ProductPublicMetricServic
     @Override
     public int importMappingsFromCsv(String filePath) throws IOException {
         int importedRows = 0;
-        try (BufferedReader reader = Files.newBufferedReader(Path.of(filePath), StandardCharsets.UTF_8)) {
+        try (BufferedReader reader = Files.newBufferedReader(Paths.get(filePath), StandardCharsets.UTF_8)) {
             String headerLine = reader.readLine();
             if (headerLine == null || headerLine.trim().isEmpty()) {
                 return 0;
@@ -80,7 +81,7 @@ public class ProductPublicMetricServiceImpl implements ProductPublicMetricServic
     @Override
     public int importLatestMetricsFromCsv(String filePath) throws IOException {
         int importedRows = 0;
-        try (BufferedReader reader = Files.newBufferedReader(Path.of(filePath), StandardCharsets.UTF_8)) {
+        try (BufferedReader reader = Files.newBufferedReader(Paths.get(filePath), StandardCharsets.UTF_8)) {
             String headerLine = reader.readLine();
             if (headerLine == null || headerLine.trim().isEmpty()) {
                 return 0;
@@ -116,7 +117,7 @@ public class ProductPublicMetricServiceImpl implements ProductPublicMetricServic
         long total = 0L;
         List<PublicMappingScoreRowVO> rows = new ArrayList<>();
 
-        try (BufferedReader reader = Files.newBufferedReader(Path.of(filePath), StandardCharsets.UTF_8)) {
+        try (BufferedReader reader = Files.newBufferedReader(Paths.get(filePath), StandardCharsets.UTF_8)) {
             String headerLine = reader.readLine();
             if (headerLine == null || headerLine.trim().isEmpty()) {
                 PublicMappingScorePreviewVO result = new PublicMappingScorePreviewVO();
@@ -194,7 +195,7 @@ public class ProductPublicMetricServiceImpl implements ProductPublicMetricServic
         }
 
         List<ProductPublicMapping> mappings = productPublicMappingMapper.selectAllByPlatform(normalizedPlatform);
-        Path outputPath = Path.of(outputDir, normalizedPlatform + "_product_public_mapping.runtime.csv");
+        Path outputPath = Paths.get(outputDir, normalizedPlatform + "_product_public_mapping.runtime.csv");
         Files.createDirectories(outputPath.getParent());
 
         try (BufferedWriter writer = Files.newBufferedWriter(outputPath, StandardCharsets.UTF_8)) {
