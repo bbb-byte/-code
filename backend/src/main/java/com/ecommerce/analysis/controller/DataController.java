@@ -3,23 +3,27 @@ package com.ecommerce.analysis.controller;
 import com.ecommerce.analysis.common.Result;
 import com.ecommerce.analysis.dto.PublicMappingConfirmRequest;
 import com.ecommerce.analysis.entity.ProductPublicMapping;
+import com.ecommerce.analysis.entity.UserBehavior;
 import com.ecommerce.analysis.service.DataImportService;
 import com.ecommerce.analysis.service.ProductPublicMetricService;
 import com.ecommerce.analysis.service.PublicTaskService;
 import com.ecommerce.analysis.service.RFMService;
+import com.ecommerce.analysis.service.UserBehaviorService;
 import com.ecommerce.analysis.vo.ImportStatusVO;
 import com.ecommerce.analysis.vo.PublicMappingScorePreviewVO;
-import com.ecommerce.analysis.vo.PublicMappingScoreRowVO;
 import com.ecommerce.analysis.vo.PublicTaskStatusVO;
 import io.swagger.annotations.Api;
 import io.swagger.annotations.ApiOperation;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.security.access.prepost.PreAuthorize;
-import org.springframework.web.bind.annotation.*;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
 
-import com.ecommerce.analysis.entity.UserBehavior;
-import com.ecommerce.analysis.service.UserBehaviorService;
 import java.io.File;
 import java.sql.SQLSyntaxErrorException;
 import java.util.Collections;
@@ -28,7 +32,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * 数据管理控制器
+ * 数据管理控制器。
  */
 @Slf4j
 @Api(tags = "数据管理")
@@ -52,6 +56,9 @@ public class DataController {
     @Autowired
     private PublicTaskService publicTaskService;
 
+    /**
+     * 启动异步 CSV 导入任务；真正的行解析和批量写库在服务层后台执行。
+     */
     @ApiOperation("导入CSV数据")
     @PostMapping("/import")
     public Result<Map<String, Object>> importData(
@@ -66,8 +73,7 @@ public class DataController {
             return Result.error("已有导入任务正在执行");
         }
 
-        // 异步执行导入
-        log.info("启动异步导入任务...");
+        // 控制器只负责发起任务，导入过程由异步服务自己维护进度和状态。
         dataImportService.importCsvData(filePath, batchSize, maxRows);
 
         Map<String, Object> result = new HashMap<>();
@@ -79,12 +85,18 @@ public class DataController {
         return Result.success("导入任务已启动", result);
     }
 
+    /**
+     * 查询当前导入任务的进度快照。
+     */
     @ApiOperation("获取导入进度")
     @GetMapping("/import/progress")
     public Result<ImportStatusVO> getImportProgress() {
         return Result.success(dataImportService.getImportStatus());
     }
 
+    /**
+     * 请求停止当前导入任务，服务层会在安全位置响应停止标记。
+     */
     @ApiOperation("停止导入")
     @PostMapping("/import/stop")
     public Result<Void> stopImport() {
@@ -92,7 +104,10 @@ public class DataController {
         return Result.success("正在停止导入", null);
     }
 
-    @ApiOperation("执行数据爬取")
+    /**
+     * 启动公网满意度抓取任务。
+     */
+    @ApiOperation("执行数据抓取")
     @PostMapping("/crawl")
     public Result<Map<String, Object>> crawlData(
             @RequestParam(defaultValue = "") String mappingPath,
@@ -105,6 +120,9 @@ public class DataController {
         return Result.success("公网满意度采集任务已启动", result);
     }
 
+    /**
+     * 复用用户当前打开的京东搜索页抓取指标，适合处理浏览器已登录场景。
+     */
     @ApiOperation("附着当前已打开京东搜索页采集公网指标")
     @PostMapping("/crawl-attached-search")
     public Result<Map<String, Object>> crawlAttachedSearchData(
@@ -118,6 +136,9 @@ public class DataController {
         return Result.success("附着搜索页公网指标采集任务已启动", result);
     }
 
+    /**
+     * 触发公网映射候选召回任务。
+     */
     @ApiOperation("召回公网映射候选商品")
     @PostMapping("/public-mapping/recall")
     public Result<Map<String, Object>> recallPublicMappingCandidates(
@@ -136,6 +157,9 @@ public class DataController {
         return Result.success("公网映射候选召回任务已启动", result);
     }
 
+    /**
+     * 触发候选评分任务，输出给人工复核使用的分数文件。
+     */
     @ApiOperation("计算公网映射候选分数")
     @PostMapping("/public-mapping/score")
     public Result<Map<String, Object>> scorePublicMappingCandidates(
@@ -149,12 +173,18 @@ public class DataController {
         return Result.success("公网映射评分任务已启动", result);
     }
 
+    /**
+     * 查询公网相关后台任务的执行状态。
+     */
     @ApiOperation("获取公网任务进度")
     @GetMapping("/public-task/progress")
     public Result<PublicTaskStatusVO> getPublicTaskProgress(@RequestParam String taskId) {
         return Result.success(publicTaskService.getTaskStatus(taskId));
     }
 
+    /**
+     * 请求取消公网后台任务。
+     */
     @ApiOperation("取消公网任务")
     @PostMapping("/public-task/cancel")
     public Result<Map<String, Object>> cancelPublicTask(@RequestParam String taskId) {
@@ -167,6 +197,9 @@ public class DataController {
                 : Result.error("无法取消任务：任务不存在或已结束");
     }
 
+    /**
+     * 分页预览评分结果，方便管理员在真正入库前复核映射质量。
+     */
     @ApiOperation("预览公网映射评分结果")
     @GetMapping("/public-mapping/score-preview")
     public Result<PublicMappingScorePreviewVO> previewPublicMappingScore(
@@ -181,6 +214,9 @@ public class DataController {
         }
     }
 
+    /**
+     * 将审核通过的公网映射批量确认入库。
+     */
     @ApiOperation("确认公网映射并入库")
     @PostMapping("/public-mapping/confirm")
     public Result<Map<String, Object>> confirmPublicMappings(@RequestBody PublicMappingConfirmRequest request) {
@@ -199,6 +235,9 @@ public class DataController {
         }
     }
 
+    /**
+     * 查询最近确认过的公网映射，默认按平台 jd 返回。
+     */
     @ApiOperation("获取最近确认的公网映射")
     @GetMapping("/public-mapping/latest")
     public Result<List<ProductPublicMapping>> getLatestPublicMappings(
@@ -209,13 +248,18 @@ public class DataController {
         } catch (Exception e) {
             if (isPublicMetricSchemaMissing(e)) {
                 log.warn("公网映射表不存在，降级返回空列表: {}", e.getMessage());
-                return Result.success("公网映射表不存在，请先执行 backend/src/main/resources/sql/upgrade_archive_dataset.sql", Collections.emptyList());
+                return Result.success(
+                        "公网映射表不存在，请先执行 backend/src/main/resources/sql/upgrade_archive_dataset.sql",
+                        Collections.emptyList());
             }
             log.error("获取最近公网映射异常", e);
             return Result.error("获取最近公网映射异常: " + e.getMessage());
         }
     }
 
+    /**
+     * 撤销一条公网映射，并同步删除已落库的补充指标。
+     */
     @ApiOperation("撤销公网映射")
     @PostMapping("/public-mapping/remove")
     public Result<Map<String, Object>> removePublicMapping(@RequestParam Long id) {
@@ -237,6 +281,9 @@ public class DataController {
         }
     }
 
+    /**
+     * 返回最近导入的原始行为记录，主要用于后台排查。
+     */
     @ApiOperation("获取最新行为数据")
     @GetMapping("/latest")
     public Result<List<UserBehavior>> getLatestBehaviors(
@@ -244,22 +291,25 @@ public class DataController {
         return Result.success(userBehaviorService.getLatestBehaviors(limit));
     }
 
+    /**
+     * 串行执行 RFM 计算和聚类，是后台“一键分析”的总入口。
+     */
     @ApiOperation("执行完整的数据分析流程")
     @PostMapping("/analyze")
     public Result<Void> analyzeData(@RequestParam(defaultValue = "5") int clusterK) {
         try {
-            // 1. 计算RFM
+            // 先刷新每个用户的 R/F/M 指标，再基于评分结果做聚类。
             rfmService.calculateAllUserRFM();
-
-            // 2. 执行聚类
             rfmService.performKMeansClustering(clusterK);
-
             return Result.success("数据分析完成", null);
         } catch (Exception e) {
             return Result.error("数据分析失败: " + e.getMessage());
         }
     }
 
+    /**
+     * 推导工作区根目录，兼容从 backend 子目录启动的情况。
+     */
     private String resolveWorkDir() {
         String workDir = System.getProperty("user.dir");
         if (workDir.endsWith("backend")) {
@@ -268,6 +318,9 @@ public class DataController {
         return workDir;
     }
 
+    /**
+     * 将相对路径解析到工作区根目录下，保证前后端传参一致。
+     */
     private String resolveWorkspacePath(String path) {
         if (path == null || path.trim().isEmpty()) {
             return path;
@@ -279,6 +332,9 @@ public class DataController {
         return new File(resolveWorkDir(), path).getAbsolutePath();
     }
 
+    /**
+     * 统一识别“公网映射相关表不存在”的异常，便于返回更明确的引导信息。
+     */
     private boolean isPublicMetricSchemaMissing(Throwable throwable) {
         Throwable current = throwable;
         while (current != null) {
@@ -299,5 +355,4 @@ public class DataController {
         }
         return false;
     }
-
 }

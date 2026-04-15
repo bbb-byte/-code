@@ -40,6 +40,9 @@ public class PublicTaskServiceImpl implements PublicTaskService {
 
     private final Map<String, PublicTaskStatusVO> tasks = new ConcurrentHashMap<>();
 
+    /**
+     * 启动公网满意度抓取后台任务。
+     */
     @Override
     public String startCrawlTask(String mappingPath, String outputDir, String fixtureDir) {
         String taskId = createTask("crawl", "公网满意度采集任务已启动");
@@ -47,6 +50,9 @@ public class PublicTaskServiceImpl implements PublicTaskService {
         return taskId;
     }
 
+    /**
+     * 启动“附着当前搜索页”的公网指标抓取任务。
+     */
     @Override
     public String startAttachedSearchCrawlTask(String candidatePath, String outputPath, String cdpUrl) {
         String taskId = createTask("crawl_attached_search", "附着搜索页公网指标采集任务已启动");
@@ -54,6 +60,9 @@ public class PublicTaskServiceImpl implements PublicTaskService {
         return taskId;
     }
 
+    /**
+     * 启动公网候选召回任务。
+     */
     @Override
     public String startRecallTask(String productPath, String outputPath, String fixtureDir, String sourceDataPath,
             String generatedProductPath, int topK, int maxProducts) {
@@ -62,6 +71,9 @@ public class PublicTaskServiceImpl implements PublicTaskService {
         return taskId;
     }
 
+    /**
+     * 启动公网候选评分任务。
+     */
     @Override
     public String startScoreTask(String productPath, String candidatePath, String outputPath) {
         String taskId = createTask("score", "公网映射评分任务已启动");
@@ -69,6 +81,9 @@ public class PublicTaskServiceImpl implements PublicTaskService {
         return taskId;
     }
 
+    /**
+     * 查询任务状态；若任务不存在则返回一个“missing”占位对象，而不是抛异常。
+     */
     @Override
     public PublicTaskStatusVO getTaskStatus(String taskId) {
         PublicTaskStatusVO status = tasks.get(taskId);
@@ -85,6 +100,9 @@ public class PublicTaskServiceImpl implements PublicTaskService {
         return status;
     }
 
+    /**
+     * 通过写取消信号文件请求后台脚本自行终止。
+     */
     @Override
     public boolean cancelTask(String taskId) {
         PublicTaskStatusVO status = tasks.get(taskId);
@@ -106,6 +124,9 @@ public class PublicTaskServiceImpl implements PublicTaskService {
         }
     }
 
+    /**
+     * 创建一条新的任务状态记录并放入内存任务表。
+     */
     private String createTask(String taskType, String message) {
         String taskId = UUID.randomUUID().toString().replace("-", "");
         PublicTaskStatusVO status = new PublicTaskStatusVO();
@@ -120,6 +141,9 @@ public class PublicTaskServiceImpl implements PublicTaskService {
         return taskId;
     }
 
+    /**
+     * 执行公网满意度抓取任务，并在脚本成功后把结果回写到数据库。
+     */
     private void runCrawlTask(String taskId, String mappingPath, String outputDir, String fixtureDir) {
         PublicTaskStatusVO status = tasks.get(taskId);
         try {
@@ -177,6 +201,9 @@ public class PublicTaskServiceImpl implements PublicTaskService {
         }
     }
 
+    /**
+     * 执行公网候选召回任务；当传入原始行为文件时会先生成内部商品快照。
+     */
     private void runRecallTask(String taskId, String productPath, String outputPath, String fixtureDir, String sourceDataPath,
             String generatedProductPath, int topK, int maxProducts) {
         PublicTaskStatusVO status = tasks.get(taskId);
@@ -246,6 +273,9 @@ public class PublicTaskServiceImpl implements PublicTaskService {
         }
     }
 
+    /**
+     * 执行公网候选评分任务。
+     */
     private void runScoreTask(String taskId, String productPath, String candidatePath, String outputPath) {
         PublicTaskStatusVO status = tasks.get(taskId);
         try {
@@ -283,6 +313,9 @@ public class PublicTaskServiceImpl implements PublicTaskService {
         }
     }
 
+    /**
+     * 调用前端 Node 脚本复用浏览器当前页面抓取搜索结果指标。
+     */
     private void runAttachedSearchCrawlTask(String taskId, String candidatePath, String outputPath, String cdpUrl) {
         PublicTaskStatusVO status = tasks.get(taskId);
         try {

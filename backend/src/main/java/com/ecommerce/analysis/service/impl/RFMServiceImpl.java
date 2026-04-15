@@ -49,6 +49,9 @@ public class RFMServiceImpl implements RFMService {
 
     private final AtomicBoolean analysisRunning = new AtomicBoolean(false);
 
+    /**
+     * 触发一次完整的全量 RFM 评分计算，并通过原子标记避免并发重复执行。
+     */
     @Override
     @Transactional
     public void calculateAllUserRFM() {
@@ -60,6 +63,9 @@ public class RFMServiceImpl implements RFMService {
         }
     }
 
+    /**
+     * 计算所有用户的 R/F/M 原始值和离散化评分。
+     */
     private void doCalculateAllUserRFM() {
         log.info("开始计算所有用户的 RFM 值...");
 
@@ -75,6 +81,7 @@ public class RFMServiceImpl implements RFMService {
         LocalDateTime baseTime = resolveBaseTime(summaryList);
 
         for (Map<String, Object> summary : summaryList) {
+            // 先把 SQL 汇总结果还原成 UserProfile，再根据是否有购买行为分流处理。
             UserProfile profile = new UserProfile();
             profile.setUserId(((Number) summary.get("user_id")).longValue());
 
@@ -105,6 +112,7 @@ public class RFMServiceImpl implements RFMService {
                 lastBuyTime = ((java.sql.Timestamp) lastBuyObj).toLocalDateTime();
             }
 
+            // 未购买用户给一个很大的 recency，占位表示“从未转化”。
             int recency = 999;
             if (lastBuyTime != null) {
                 recency = (int) ChronoUnit.DAYS.between(lastBuyTime, baseTime);
@@ -153,6 +161,7 @@ public class RFMServiceImpl implements RFMService {
         Collections.sort(buyerMonetary);
 
         for (UserProfile profile : buyerProfiles) {
+            // R 维度越近越好，因此需要对五分位结果做一次反转。
             int rScore = 5 - getQuintileScore(profile.getRecency(), buyerRecency) + 1;
             profile.setRScore(Math.max(1, Math.min(5, rScore)));
 
@@ -170,6 +179,7 @@ public class RFMServiceImpl implements RFMService {
         }
 
         for (UserProfile profile : nonBuyerProfiles) {
+            // 未购买用户不参与聚类，统一归为未转化群体。
             profile.setRScore(1);
             profile.setFScore(1);
             profile.setMScore(1);
@@ -190,6 +200,9 @@ public class RFMServiceImpl implements RFMService {
                 allProfiles.size(), buyerProfiles.size(), nonBuyerProfiles.size());
     }
 
+    /**
+     * 用样本中的最大活跃时间作为分析基准，避免历史数据因“当前时间”漂移导致评分失真。
+     */
     private LocalDateTime resolveBaseTime(List<Map<String, Object>> summaryList) {
         LocalDateTime maxActiveTime = summaryList.stream()
                 .map(summary -> {
@@ -208,6 +221,9 @@ public class RFMServiceImpl implements RFMService {
         return maxActiveTime.plusDays(1);
     }
 
+    /**
+     * 查询单个用户画像。
+     */
     @Override
     public UserProfile calculateUserRFM(Long userId) {
         LambdaQueryWrapper<UserProfile> wrapper = new LambdaQueryWrapper<>();
@@ -215,6 +231,9 @@ public class RFMServiceImpl implements RFMService {
         return userProfileMapper.selectOne(wrapper);
     }
 
+    /**
+     * 执行 K-Means 聚类，将已购买用户映射到不同的用户群体。
+     */
     @Override
     @Transactional
     public void performKMeansClustering(int k) {
@@ -226,6 +245,9 @@ public class RFMServiceImpl implements RFMService {
         }
     }
 
+    /**
+     * 真正执行聚类计算的内部实现。
+     */
     private void doPerformKMeansClustering(int k) {
         log.info("开始执行 K-Means 聚类，K={}", k);
 
@@ -242,6 +264,7 @@ public class RFMServiceImpl implements RFMService {
         log.info("有购买行为的用户数: {}，无购买行为的用户数: {}",
                 profilesWithBuys.size(), profiles.size() - profilesWithBuys.size());
 
+        // 没有购买行为的用户不进入 K-Means，直接固定为未转化群组。
         profiles.stream()
                 .filter(p -> p.getTotalBuys() == null || p.getTotalBuys() == 0)
                 .forEach(p -> {
@@ -259,6 +282,7 @@ public class RFMServiceImpl implements RFMService {
         Map<DoublePoint, Long> pointUserMap = new HashMap<>();
 
         for (UserProfile profile : profilesWithBuys) {
+            // 聚类特征使用离散化后的 R/F/M 评分，避免金额量纲过大压制其他维度。
             double[] values = new double[] {
                     profile.getRScore() != null ? profile.getRScore() : 1,
                     profile.getFScore() != null ? profile.getFScore() : 1,
@@ -294,6 +318,9 @@ public class RFMServiceImpl implements RFMService {
         log.info("K-Means 聚类完成，共生成 {} 个簇", clusters.size());
     }
 
+    /**
+     * 进入画像分析临界区，防止多个分析任务并发刷新同一批画像数据。
+     */
     private void beginAnalysisTask(String taskName) {
         if (!analysisRunning.compareAndSet(false, true)) {
             throw new IllegalStateException(ANALYSIS_BUSY_MESSAGE);
@@ -301,12 +328,18 @@ public class RFMServiceImpl implements RFMService {
         log.info("开始执行画像分析任务: {}", taskName);
     }
 
+    /**
+     * 退出画像分析临界区，并在成功或失败后统一清理分析缓存。
+     */
     private void finishAnalysisTask(String taskName) {
         analysisRunning.set(false);
         analysisCacheService.evictAllAnalyticsCaches();
         log.info("画像分析任务结束: {}", taskName);
     }
 
+    /**
+     * 返回用户分群分布。
+     */
     @Override
     public List<Map<String, Object>> getUserGroupDistribution() {
         String cacheKey = Constants.REDIS_PROFILE_PREFIX + "group-distribution";
@@ -314,6 +347,9 @@ public class RFMServiceImpl implements RFMService {
                 userProfileMapper::countByUserGroup);
     }
 
+    /**
+     * 返回聚类分布。
+     */
     @Override
     public List<Map<String, Object>> getClusterDistribution() {
         String cacheKey = Constants.REDIS_PROFILE_PREFIX + "cluster-distribution";
@@ -321,6 +357,9 @@ public class RFMServiceImpl implements RFMService {
                 userProfileMapper::countByCluster);
     }
 
+    /**
+     * 返回 RFM 综合分数分布。
+     */
     @Override
     public List<Map<String, Object>> getRFMScoreDistribution() {
         String cacheKey = Constants.REDIS_PROFILE_PREFIX + "rfm-distribution";
@@ -328,6 +367,9 @@ public class RFMServiceImpl implements RFMService {
                 userProfileMapper::getRfmScoreDistribution);
     }
 
+    /**
+     * 返回聚类中心，方便前端解释不同簇的特征。
+     */
     @Override
     public List<Map<String, Object>> getClusterCenters() {
         String cacheKey = Constants.REDIS_PROFILE_PREFIX + "cluster-centers";
@@ -335,6 +377,9 @@ public class RFMServiceImpl implements RFMService {
                 userProfileMapper::getClusterCenters);
     }
 
+    /**
+     * 返回高价值用户列表。
+     */
     @Override
     public List<UserProfile> getHighValueUsers(int limit) {
         String cacheKey = Constants.REDIS_PROFILE_PREFIX + "high-value-users:" + limit;
@@ -342,6 +387,9 @@ public class RFMServiceImpl implements RFMService {
                 () -> userProfileMapper.getHighValueUsers(limit));
     }
 
+    /**
+     * 返回指定分群下的 TOP 用户。
+     */
     @Override
     public List<UserProfile> getTopUsersByGroup(String userGroup, int limit) {
         String normalizedGroup = userGroup == null ? "all" : userGroup;
@@ -350,6 +398,9 @@ public class RFMServiceImpl implements RFMService {
                 () -> userProfileMapper.getTopUsersByGroup(userGroup, limit));
     }
 
+    /**
+     * 根据离散化后的 R/F/M 得分把用户归入业务上可解释的群组。
+     */
     private String determineUserGroup(UserProfile profile) {
         int r = profile.getRScore();
         int f = profile.getFScore();
@@ -373,6 +424,9 @@ public class RFMServiceImpl implements RFMService {
         }
     }
 
+    /**
+     * 将连续值映射为 1~5 的五分位分数。
+     */
     private int getQuintileScore(int value, List<Integer> sortedList) {
         if (sortedList.isEmpty()) {
             return 1;

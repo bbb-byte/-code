@@ -15,7 +15,7 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 
 /**
- * 用户服务实现类
+ * 用户服务实现类。
  */
 @Service
 public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements UserService {
@@ -29,28 +29,28 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
     @Autowired
     private JwtUtil jwtUtil;
 
+    /**
+     * 执行登录校验，并在校验通过后组装返回给前端的登录视图对象。
+     */
     @Override
     public LoginVO login(LoginDTO dto) {
-        // 查询用户
+        // 先按用户名查出账号，再依次做密码和状态校验。
         User user = userMapper.selectByUsername(dto.getUsername());
         if (user == null) {
             throw new RuntimeException("用户不存在");
         }
 
-        // 验证密码
         if (!passwordEncoder.matches(dto.getPassword(), user.getPassword())) {
             throw new RuntimeException("密码错误");
         }
 
-        // 检查状态
         if (user.getStatus() != Constants.STATUS_ENABLE) {
             throw new RuntimeException("账户已被禁用");
         }
 
-        // 生成Token
+        // Token 中会携带用户主键、用户名和角色，供后续鉴权链路直接解析。
         String token = jwtUtil.generateToken(user.getId(), user.getUsername(), user.getRole());
 
-        // 构建响应
         LoginVO vo = new LoginVO();
         vo.setUserId(user.getId());
         vo.setUsername(user.getUsername());
@@ -62,14 +62,15 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
         return vo;
     }
 
+    /**
+     * 注册普通用户账号，默认赋予用户角色和启用状态。
+     */
     @Override
     public void register(RegisterDTO dto) {
-        // 检查用户名是否存在
         if (existsByUsername(dto.getUsername())) {
             throw new RuntimeException("用户名已存在");
         }
 
-        // 创建用户
         User user = new User();
         user.setUsername(dto.getUsername());
         user.setPassword(passwordEncoder.encode(dto.getPassword()));
@@ -82,6 +83,9 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
         save(user);
     }
 
+    /**
+     * 管理员创建用户时允许指定角色和启用状态，但仍会复用统一的密码加密逻辑。
+     */
     @Override
     public void createUserByAdmin(AdminCreateUserDTO dto) {
         if (existsByUsername(dto.getUsername())) {
@@ -106,11 +110,17 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
         save(user);
     }
 
+    /**
+     * 按用户名查询用户实体。
+     */
     @Override
     public User getByUsername(String username) {
         return userMapper.selectByUsername(username);
     }
 
+    /**
+     * 判断用户名是否已经被占用。
+     */
     @Override
     public boolean existsByUsername(String username) {
         return userMapper.countByUsername(username) > 0;

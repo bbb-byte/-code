@@ -77,6 +77,9 @@ public class DataImportServiceImpl implements DataImportService {
     private volatile Long startedAt;
     private volatile Long finishedAt;
 
+    /**
+     * 异步导入 CSV 数据，并在导入过程中持续维护进度统计。
+     */
     @Override
     @Async
     public void importCsvData(String filePath, int batchSize, long maxRows) {
@@ -147,6 +150,7 @@ public class DataImportServiceImpl implements DataImportService {
                     }
 
                     try {
+                        // 每一行都先被解析成统一的 ParsedRow，再决定是否入库。
                         ParsedRow parsedRow = parseCsvLine(line, datasetSpec);
                         processedRows.incrementAndGet();
 
@@ -170,6 +174,7 @@ public class DataImportServiceImpl implements DataImportService {
                             preprocessedRows.incrementAndGet();
                         }
 
+                        // 同一批文件内部先按 event_id 去重，减少数据库冲突成本。
                         if (!seenEventIds.add(parsedRow.behavior.getEventId())) {
                             inFileDuplicateRows.incrementAndGet();
                             skippedRows.incrementAndGet();
@@ -234,6 +239,9 @@ public class DataImportServiceImpl implements DataImportService {
         }
     }
 
+    /**
+     * 返回当前导入任务的实时快照。
+     */
     @Override
     public ImportStatusVO getImportStatus() {
         ImportStatusVO status = new ImportStatusVO();
@@ -258,11 +266,17 @@ public class DataImportServiceImpl implements DataImportService {
         return status;
     }
 
+    /**
+     * 判断当前是否存在正在运行的导入任务。
+     */
     @Override
     public boolean isImporting() {
         return importing.get();
     }
 
+    /**
+     * 请求停止当前导入任务；真正停止会发生在下一次循环检查到 stopFlag 时。
+     */
     @Override
     public void stopImport() {
         stopFlag = true;
@@ -270,6 +284,9 @@ public class DataImportServiceImpl implements DataImportService {
         log.info("正在停止导入...");
     }
 
+    /**
+     * 重置导入状态计数器，为新任务做初始化。
+     */
     private void resetImportStatus(String filePath, long maxRows) {
         stopFlag = false;
         processedRows.set(0);
@@ -291,6 +308,9 @@ public class DataImportServiceImpl implements DataImportService {
         finishedAt = null;
     }
 
+    /**
+     * 计算导入进度百分比。
+     */
     private double calculateProgress() {
         long total = totalRows.get();
         if (total > 0) {
@@ -302,6 +322,9 @@ public class DataImportServiceImpl implements DataImportService {
         return importing.get() ? 0D : 100D;
     }
 
+    /**
+     * 为 archive 数据集构建按日期均衡抽样方案，避免大文件导入时样本分布失衡。
+     */
     private SamplingPlan buildSamplingPlan(String filePath, DatasetFormat format, long maxRows) throws Exception {
         if (format != DatasetFormat.ARCHIVE || maxRows <= 0) {
             return null;

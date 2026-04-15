@@ -47,6 +47,9 @@ public class ProductPublicMetricServiceImpl implements ProductPublicMetricServic
     @Autowired
     private AnalysisCacheService analysisCacheService;
 
+    /**
+     * 导入人工确认后的公网映射 CSV，并按 item_id + 平台做 upsert。
+     */
     @Override
     public int importMappingsFromCsv(String filePath) throws IOException {
         int importedRows = 0;
@@ -78,6 +81,9 @@ public class ProductPublicMetricServiceImpl implements ProductPublicMetricServic
         return importedRows;
     }
 
+    /**
+     * 导入最新抓取到的公网指标快照。
+     */
     @Override
     public int importLatestMetricsFromCsv(String filePath) throws IOException {
         int importedRows = 0;
@@ -109,6 +115,9 @@ public class ProductPublicMetricServiceImpl implements ProductPublicMetricServic
         return importedRows;
     }
 
+    /**
+     * 分页预览评分文件，供管理员在正式确认前复核。
+     */
     @Override
     public PublicMappingScorePreviewVO previewScoreRows(String filePath, int page, int pageSize) throws IOException {
         int safePage = Math.max(page, 1);
@@ -156,6 +165,9 @@ public class ProductPublicMetricServiceImpl implements ProductPublicMetricServic
         return result;
     }
 
+    /**
+     * 批量确认人工审核通过的公网映射。
+     */
     @Override
     public int confirmMappings(List<PublicMappingScoreRowVO> rows) {
         int confirmedRows = 0;
@@ -167,6 +179,7 @@ public class ProductPublicMetricServiceImpl implements ProductPublicMetricServic
             if (mapping == null) {
                 continue;
             }
+            // 同一个公网商品只能绑定一个内部商品，确认前先释放冲突绑定。
             releaseConflictingSourceProduct(mapping);
             productPublicMappingMapper.upsert(mapping);
             confirmedRows++;
@@ -177,6 +190,9 @@ public class ProductPublicMetricServiceImpl implements ProductPublicMetricServic
         return confirmedRows;
     }
 
+    /**
+     * 读取最近确认过的映射记录。
+     */
     @Override
     public List<ProductPublicMapping> listLatestMappings(String sourcePlatform, int limit) {
         String normalizedPlatform = normalizePlatform(sourcePlatform);
@@ -187,6 +203,9 @@ public class ProductPublicMetricServiceImpl implements ProductPublicMetricServic
         return productPublicMappingMapper.selectLatestByPlatform(normalizedPlatform, normalizedLimit);
     }
 
+    /**
+     * 将当前映射表导出为运行时 CSV，供 Python 抓取脚本继续消费。
+     */
     @Override
     public String exportMappingsToCsv(String sourcePlatform, String outputDir) throws IOException {
         String normalizedPlatform = normalizePlatform(sourcePlatform);
@@ -225,6 +244,9 @@ public class ProductPublicMetricServiceImpl implements ProductPublicMetricServic
         return outputPath.toString();
     }
 
+    /**
+     * 删除映射，并同步删除对应平台下的已落库公网指标。
+     */
     @Override
     public boolean removeMapping(Long id) {
         if (id == null) {
@@ -245,6 +267,9 @@ public class ProductPublicMetricServiceImpl implements ProductPublicMetricServic
         return removed;
     }
 
+    /**
+     * 把 CSV 表头映射成列名到下标的索引表，后续按列名取值。
+     */
     private Map<String, Integer> parseHeader(String headerLine) {
         Map<String, Integer> headerIndex = new HashMap<>();
         String[] parts = parseCsvLine(headerLine);

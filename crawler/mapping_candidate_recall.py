@@ -41,6 +41,7 @@ class SearchCandidate:
 
 
 class JDCandidateRecall:
+    """负责在京东搜索页中召回公网候选商品。"""
     def __init__(
         self,
         timeout: int = DEFAULT_TIMEOUT,
@@ -127,6 +128,7 @@ class JDCandidateRecall:
         logger.info("Chrome 浏览器已独立启动（备用端口 19222）")
 
     def _close_browser(self) -> None:
+        """按浏览器所有权决定是退出整个浏览器还是只关闭搜索标签页。"""
         if self.browser:
             try:
                 if self._owns_browser:
@@ -206,17 +208,20 @@ class JDCandidateRecall:
         return False
 
     def set_debug_dir(self, debug_dir: Optional[Path]) -> None:
+        """设置调试目录，用于保存异常搜索结果页面。"""
         self.debug_dir = debug_dir
         if self.debug_dir:
             self.debug_dir.mkdir(parents=True, exist_ok=True)
 
     def build_keyword(self, brand: str, category_name: str) -> str:
+        """用品牌 + 叶子类目拼搜索词，尽量兼顾精确度和召回率。"""
         brand_part = (brand or "").strip()
         category_part = self.extract_category_keyword(category_name)
         parts = [part for part in (brand_part, category_part) if part]
         return " ".join(parts) or category_name.strip() or brand_part
 
     def extract_category_keyword(self, category_name: str) -> str:
+        """从多级类目中提取最末级关键词。"""
         if not category_name:
             return ""
         parts = [segment.strip() for segment in re.split(r"[>/|.]", category_name) if segment.strip()]
@@ -225,6 +230,7 @@ class JDCandidateRecall:
         return parts[-1]
 
     def fetch_search_page(self, item_id: int, keyword: str) -> str:
+        """优先读取夹具，否则驱动浏览器执行真实搜索并处理风控重试。"""
         if self.fixture_dir:
             item_fixture = self.fixture_dir / f"jd_search_{item_id}.html"
             if item_fixture.exists():
@@ -449,6 +455,7 @@ class JDCandidateRecall:
         category_hint: str = "",
         top_k: int = DEFAULT_TOP_K,
     ) -> List[SearchCandidate]:
+        """从搜索结果页 HTML 中提取前 top_k 个候选商品。"""
         candidates: List[SearchCandidate] = []
 
         # ========== 新版京东（2025+）结构 ==========
@@ -565,6 +572,7 @@ class JDCandidateRecall:
         return candidates
 
     def infer_brand(self, title: str, brand_hint: str) -> str:
+        """标题里提取不到品牌时，回退到内部品牌提示。"""
         if not brand_hint:
             return ""
         title_simple = re.sub(r"[^0-9a-z\u4e00-\u9fff]+", "", title.lower())
@@ -574,6 +582,7 @@ class JDCandidateRecall:
         return ""
 
     def infer_category(self, title: str, category_hint: str) -> str:
+        """候选页通常没有结构化类目，这里保守回退到内部类目提示。"""
         if not category_hint:
             return ""
         keyword = self.extract_category_keyword(category_hint)
@@ -585,6 +594,7 @@ class JDCandidateRecall:
         return ""
 
     def parse_price(self, raw: str) -> Optional[float]:
+        """解析搜索结果中的价格文本。"""
         if not raw:
             return None
         try:
@@ -593,6 +603,7 @@ class JDCandidateRecall:
             return None
 
     def clean_html(self, raw: str) -> str:
+        """做最轻量的 HTML 清洗，方便正则抽取。"""
         if not raw:
             return ""
         without_tags = re.sub(r"<[^>]+>", " ", raw)
@@ -600,6 +611,7 @@ class JDCandidateRecall:
         return normalized
 
     def extract_first(self, text: str, pattern: str) -> str:
+        """返回第一个正则命中的分组文本。"""
         match = re.search(pattern, text, re.S)
         if not match:
             return ""
@@ -607,6 +619,7 @@ class JDCandidateRecall:
 
 
 def write_rows(path: Path, rows: Iterable[Dict[str, object]]) -> None:
+    """把召回结果写回 CSV。"""
     fieldnames = [
         "item_id",
         "source_platform",
@@ -627,6 +640,7 @@ def write_rows(path: Path, rows: Iterable[Dict[str, object]]) -> None:
 
 
 def resolve_path(base_dir: Path, raw_path: str) -> Path:
+    """把命令行中的路径解析为绝对路径。"""
     path = Path(raw_path)
     if path.is_absolute():
         return path
@@ -641,6 +655,7 @@ def resolve_path(base_dir: Path, raw_path: str) -> Path:
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """构造命令行参数解析器。"""
     parser = argparse.ArgumentParser(description="Recall JD product candidates for internal products")
     parser.add_argument("--products", required=True, help="Internal product snapshot CSV path")
     parser.add_argument("--output", required=True, help="Candidate CSV output path")
@@ -661,6 +676,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> None:
+    """脚本入口：读取商品、执行召回、输出候选 CSV。"""
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(message)s",

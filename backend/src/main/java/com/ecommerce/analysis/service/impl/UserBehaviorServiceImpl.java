@@ -18,7 +18,7 @@ import java.util.Map;
 import java.util.Objects;
 
 /**
- * 鐢ㄦ埛琛屼负鏈嶅姟瀹炵幇绫?
+ * 用户行为服务实现类。
  */
 @Service
 public class UserBehaviorServiceImpl extends ServiceImpl<UserBehaviorMapper, UserBehavior>
@@ -40,6 +40,9 @@ public class UserBehaviorServiceImpl extends ServiceImpl<UserBehaviorMapper, Use
     @Autowired
     private AnalysisCacheService analysisCacheService;
 
+    /**
+     * 加载首页仪表盘数据，并通过统一缓存服务降低聚合查询频率。
+     */
     @Override
     public DashboardVO getDashboardData() {
         String cacheKey = Constants.REDIS_ANALYSIS_PREFIX + "dashboard";
@@ -47,6 +50,9 @@ public class UserBehaviorServiceImpl extends ServiceImpl<UserBehaviorMapper, Use
                 this::loadDashboardData);
     }
 
+    /**
+     * 读取行为类型分布。
+     */
     @Override
     public List<Map<String, Object>> getBehaviorTypeDistribution() {
         String cacheKey = Constants.REDIS_ANALYSIS_PREFIX + "behavior-distribution";
@@ -54,6 +60,9 @@ public class UserBehaviorServiceImpl extends ServiceImpl<UserBehaviorMapper, Use
                 userBehaviorMapper::countByBehaviorType);
     }
 
+    /**
+     * 返回每日行为趋势；未传时间区间时自动回退到库中可用的最新范围。
+     */
     @Override
     public List<Map<String, Object>> getDailyBehaviorTrend(String startDate, String endDate) {
         String normalizedStartDate = startDate;
@@ -74,6 +83,9 @@ public class UserBehaviorServiceImpl extends ServiceImpl<UserBehaviorMapper, Use
                 () -> userBehaviorMapper.getDailyBehaviorStats(finalStartDate, finalEndDate));
     }
 
+    /**
+     * 按浏览量返回热门商品。
+     */
     @Override
     public List<Map<String, Object>> getHotProductsByView(int limit) {
         String cacheKey = Constants.REDIS_ANALYSIS_PREFIX + "hot-products:view:" + limit;
@@ -81,6 +93,9 @@ public class UserBehaviorServiceImpl extends ServiceImpl<UserBehaviorMapper, Use
                 () -> userBehaviorMapper.getHotProductsByView(limit));
     }
 
+    /**
+     * 按购买量返回热门商品。
+     */
     @Override
     public List<Map<String, Object>> getHotProductsByBuy(int limit) {
         String cacheKey = Constants.REDIS_ANALYSIS_PREFIX + "hot-products:buy:" + limit;
@@ -88,6 +103,9 @@ public class UserBehaviorServiceImpl extends ServiceImpl<UserBehaviorMapper, Use
                 () -> userBehaviorMapper.getHotProductsByBuy(limit));
     }
 
+    /**
+     * 返回热门商品与公网补充指标的分页聚合结果。
+     */
     @Override
     public HotProductsPublicMetricsPageVO getHotProductsWithPublicMetrics(int page, int pageSize, boolean onlyWithMetrics) {
         int safePage = Math.max(page, 1);
@@ -99,6 +117,9 @@ public class UserBehaviorServiceImpl extends ServiceImpl<UserBehaviorMapper, Use
                 () -> loadHotProductsPublicMetricsPage(offset, safePage, safePageSize, onlyWithMetrics));
     }
 
+    /**
+     * 读取热门类目分布。
+     */
     @Override
     public List<Map<String, Object>> getHotCategories(int limit) {
         String cacheKey = Constants.REDIS_ANALYSIS_PREFIX + "hot-categories:" + limit;
@@ -106,6 +127,9 @@ public class UserBehaviorServiceImpl extends ServiceImpl<UserBehaviorMapper, Use
                 () -> userBehaviorMapper.getHotCategories(limit));
     }
 
+    /**
+     * 读取转化漏斗统计。
+     */
     @Override
     public Map<String, Object> getConversionFunnel() {
         String cacheKey = Constants.REDIS_ANALYSIS_PREFIX + "conversion-funnel";
@@ -113,6 +137,9 @@ public class UserBehaviorServiceImpl extends ServiceImpl<UserBehaviorMapper, Use
                 userBehaviorMapper::getConversionFunnel);
     }
 
+    /**
+     * 读取每小时行为分布。
+     */
     @Override
     public List<Map<String, Object>> getHourlyDistribution() {
         String cacheKey = Constants.REDIS_ANALYSIS_PREFIX + "hourly-distribution";
@@ -120,6 +147,9 @@ public class UserBehaviorServiceImpl extends ServiceImpl<UserBehaviorMapper, Use
                 userBehaviorMapper::getHourlyDistribution);
     }
 
+    /**
+     * 返回全局概览信息，用于后台概览卡片展示。
+     */
     @Override
     public Map<String, Object> getDataOverview() {
         String cacheKey = Constants.REDIS_ANALYSIS_PREFIX + "overview";
@@ -133,11 +163,17 @@ public class UserBehaviorServiceImpl extends ServiceImpl<UserBehaviorMapper, Use
         });
     }
 
+    /**
+     * 读取最近导入的行为记录。
+     */
     @Override
     public List<UserBehavior> getLatestBehaviors(int limit) {
         return userBehaviorMapper.getLatestBehaviors(limit);
     }
 
+    /**
+     * 将多种统计结果组装为仪表盘 VO。
+     */
     private DashboardVO loadDashboardData() {
         DashboardVO vo = new DashboardVO();
 
@@ -149,6 +185,7 @@ public class UserBehaviorServiceImpl extends ServiceImpl<UserBehaviorMapper, Use
         List<Map<String, Object>> behaviorStats = userBehaviorMapper.countByBehaviorType();
         vo.setBehaviorDistribution(behaviorStats);
 
+        // SQL 返回的是按行为类型分组后的计数，需要在这里回填到固定字段。
         long totalViews = 0, totalBuys = 0, totalCarts = 0, totalFavs = 0;
         for (Map<String, Object> stat : behaviorStats) {
             String type = (String) stat.get("behavior_type");
@@ -191,6 +228,9 @@ public class UserBehaviorServiceImpl extends ServiceImpl<UserBehaviorMapper, Use
         return vo;
     }
 
+    /**
+     * 执行带分页参数的公网补充指标查询。
+     */
     private HotProductsPublicMetricsPageVO loadHotProductsPublicMetricsPage(int offset, int page, int pageSize,
             boolean onlyWithMetrics) {
         HotProductsPublicMetricsPageVO result = new HotProductsPublicMetricsPageVO();
@@ -201,6 +241,9 @@ public class UserBehaviorServiceImpl extends ServiceImpl<UserBehaviorMapper, Use
         return result;
     }
 
+    /**
+     * 判空工具，避免引入额外依赖。
+     */
     private boolean isBlank(String value) {
         return value == null || value.trim().isEmpty();
     }

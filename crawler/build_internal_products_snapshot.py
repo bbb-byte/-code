@@ -7,12 +7,15 @@ from typing import Dict, Iterable, Optional, Sequence
 
 @dataclass
 class ProductSnapshot:
+    """从行为日志中归并出的商品快照。"""
+
     item_id: int
     brand: str
     category_name: str
     price: Optional[float]
 
     def merge(self, other: "ProductSnapshot") -> "ProductSnapshot":
+        """同一 item_id 多次出现时，保留信息更完整的字段值。"""
         return ProductSnapshot(
             item_id=self.item_id,
             brand=pick_better_text(self.brand, other.brand),
@@ -22,10 +25,12 @@ class ProductSnapshot:
 
 
 def normalize_header(header: str) -> str:
+    """把表头归一化，便于兼容不同来源 CSV。"""
     return "".join(ch for ch in (header or "").strip().lower() if ch.isalnum())
 
 
 def value_of(row: Dict[str, str], aliases: Sequence[str]) -> str:
+    """按别名顺序取字段值。"""
     for alias in aliases:
         value = row.get(alias)
         if value is not None:
@@ -34,6 +39,7 @@ def value_of(row: Dict[str, str], aliases: Sequence[str]) -> str:
 
 
 def parse_int(value: str) -> Optional[int]:
+    """解析整数。"""
     raw = (value or "").strip()
     if not raw:
         return None
@@ -44,17 +50,19 @@ def parse_int(value: str) -> Optional[int]:
 
 
 def parse_float(value: str) -> Optional[float]:
+    """解析价格字段，忽略无效或非正数值。"""
     raw = (value or "").strip()
     if not raw:
         return None
     try:
-        numeric = float(raw.replace(",", "").replace("¥", "").replace("元", ""))
+        numeric = float(raw.replace(",", "").replace("楼", "").replace("元", ""))
         return numeric if numeric > 0 else None
     except ValueError:
         return None
 
 
 def pick_better_text(current: str, incoming: str) -> str:
+    """优先保留非空且更长的文本，通常意味着信息更完整。"""
     current_clean = (current or "").strip()
     incoming_clean = (incoming or "").strip()
     if not current_clean:
@@ -67,6 +75,7 @@ def pick_better_text(current: str, incoming: str) -> str:
 
 
 def pick_better_price(current: Optional[float], incoming: Optional[float]) -> Optional[float]:
+    """价格字段只在当前为空时用新值补齐，避免被后续异常值覆盖。"""
     if current is None:
         return incoming
     if incoming is None:
@@ -75,6 +84,7 @@ def pick_better_price(current: Optional[float], incoming: Optional[float]) -> Op
 
 
 def iter_rows(path: Path) -> Iterable[Dict[str, str]]:
+    """逐行读取 CSV，并返回字段名已归一化的字典。"""
     with path.open("r", encoding="utf-8-sig", newline="") as handle:
         reader = csv.DictReader(handle)
         normalized_headers = [normalize_header(name) for name in (reader.fieldnames or [])]
@@ -86,6 +96,7 @@ def iter_rows(path: Path) -> Iterable[Dict[str, str]]:
 
 
 def build_snapshots(input_path: Path) -> Dict[int, ProductSnapshot]:
+    """从行为级 CSV 生成按 item_id 聚合的商品快照。"""
     snapshots: Dict[int, ProductSnapshot] = {}
     for row in iter_rows(input_path):
         item_id = parse_int(value_of(row, ("itemid", "productid", "goodsid")))
@@ -103,6 +114,7 @@ def build_snapshots(input_path: Path) -> Dict[int, ProductSnapshot]:
 
 
 def write_snapshots(output_path: Path, snapshots: Dict[int, ProductSnapshot]) -> None:
+    """把商品快照写回 CSV。"""
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with output_path.open("w", encoding="utf-8", newline="") as handle:
         writer = csv.writer(handle)
@@ -118,6 +130,7 @@ def write_snapshots(output_path: Path, snapshots: Dict[int, ProductSnapshot]) ->
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """构造命令行参数解析器。"""
     parser = argparse.ArgumentParser(description="从 Kaggle/archive 原始行为 CSV 生成商品快照 CSV")
     parser.add_argument("--input", required=True, help="原始行为 CSV 路径")
     parser.add_argument("--output", required=True, help="商品快照 CSV 路径")
@@ -125,6 +138,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def resolve_path(base_dir: Path, raw_path: str) -> Path:
+    """把命令行中的路径解析为绝对路径。"""
     path = Path(raw_path)
     if path.is_absolute():
         return path
@@ -139,6 +153,7 @@ def resolve_path(base_dir: Path, raw_path: str) -> Path:
 
 
 def main() -> None:
+    """脚本入口：读取行为日志，输出商品快照。"""
     args = build_parser().parse_args()
     base_dir = Path(__file__).resolve().parent
     input_path = resolve_path(base_dir, args.input)

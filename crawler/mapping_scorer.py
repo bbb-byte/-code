@@ -18,6 +18,8 @@ GENERIC_CATEGORY_TOKENS = {
 
 @dataclass
 class InternalProduct:
+    """内部商品快照中的标准化商品信息。"""
+
     item_id: int
     brand: str
     category_name: str
@@ -26,6 +28,8 @@ class InternalProduct:
 
 @dataclass
 class CandidateProduct:
+    """公网候选商品的基础信息。"""
+
     item_id: int
     source_platform: str
     source_product_id: str
@@ -37,33 +41,39 @@ class CandidateProduct:
 
 
 def normalize_header(header: str) -> str:
+    """把 CSV 表头统一成便于别名匹配的紧凑格式。"""
     return re.sub(r"[^a-z0-9]", "", (header or "").strip().lower())
 
 
 def normalize_text(value: str) -> str:
+    """保留中英文与数字，移除其余符号，适合做弱匹配。"""
     lowered = (value or "").strip().lower()
     return re.sub(r"[^0-9a-z\u4e00-\u9fff]+", " ", lowered).strip()
 
 
 def simplify_text(value: str) -> str:
+    """进一步压缩文本，用于品牌名等更严格的包含判断。"""
     return re.sub(r"[^0-9a-z\u4e00-\u9fff]+", "", (value or "").strip().lower())
 
 
 def tokenize(value: str) -> Set[str]:
+    """把文本切成去噪后的 token 集合。"""
     return {token for token in normalize_text(value).split() if token}
 
 
 def parse_float(value: str) -> Optional[float]:
+    """尽量把价格类字符串解析成浮点数。"""
     raw = (value or "").strip()
     if not raw:
         return None
     try:
-        return float(raw.replace(",", "").replace("¥", "").replace("元", ""))
+        return float(raw.replace(",", "").replace("楼", "").replace("元", ""))
     except ValueError:
         return None
 
 
 def parse_int(value: str) -> Optional[int]:
+    """把字符串解析成整数；失败时返回 None。"""
     raw = (value or "").strip()
     if not raw:
         return None
@@ -74,6 +84,7 @@ def parse_int(value: str) -> Optional[int]:
 
 
 def value_of(row: Dict[str, str], aliases: Sequence[str]) -> str:
+    """按别名顺序取字段值，兼容不同来源 CSV 的列名差异。"""
     for alias in aliases:
         value = row.get(alias)
         if value is not None:
@@ -82,6 +93,7 @@ def value_of(row: Dict[str, str], aliases: Sequence[str]) -> str:
 
 
 def read_csv_rows(path: Path) -> Iterable[Dict[str, str]]:
+    """读取 CSV，并把所有字段名归一化后再输出。"""
     with path.open("r", encoding="utf-8-sig", newline="") as handle:
         reader = csv.DictReader(handle)
         normalized_fieldnames = [normalize_header(name) for name in (reader.fieldnames or [])]
@@ -93,6 +105,7 @@ def read_csv_rows(path: Path) -> Iterable[Dict[str, str]]:
 
 
 def load_products(path: Path) -> Dict[int, InternalProduct]:
+    """加载内部商品快照，按 item_id 建索引。"""
     products: Dict[int, InternalProduct] = {}
     for row in read_csv_rows(path):
         item_id = parse_int(value_of(row, ("itemid", "productid", "goodsid")))
@@ -111,6 +124,7 @@ def load_products(path: Path) -> Dict[int, InternalProduct]:
 
 
 def load_candidates(path: Path) -> List[CandidateProduct]:
+    """加载公网候选商品列表。"""
     candidates: List[CandidateProduct] = []
     for row in read_csv_rows(path):
         item_id = parse_int(value_of(row, ("itemid", "productid", "goodsid")))
@@ -136,6 +150,7 @@ def load_candidates(path: Path) -> List[CandidateProduct]:
 
 
 def brand_score(internal_brand: str, public_brand: str, public_title: str) -> float:
+    """品牌分是最强特征，精确命中权重最高，标题包含次之。"""
     if not internal_brand:
         return 0.0
     internal_exact = internal_brand.strip().lower()
@@ -154,6 +169,7 @@ def brand_score(internal_brand: str, public_brand: str, public_title: str) -> fl
 
 
 def category_keywords(category_name: str) -> Set[str]:
+    """提取类目叶子节点中的关键词，避免父类目干扰。"""
     tokens = tokenize(re.split(r"[>/|]", category_name or "")[-1])
     filtered = {token for token in tokens if token not in GENERIC_CATEGORY_TOKENS}
     if filtered:
@@ -162,6 +178,7 @@ def category_keywords(category_name: str) -> Set[str]:
 
 
 def category_score(internal_category: str, public_category: str) -> float:
+    """类目命中用于兜底品牌之外的语义一致性。"""
     if not internal_category or not public_category:
         return 0.0
     if normalize_text(internal_category) == normalize_text(public_category):
@@ -172,6 +189,7 @@ def category_score(internal_category: str, public_category: str) -> float:
 
 
 def price_score(internal_price: Optional[float], public_price: Optional[float]) -> float:
+    """价格接近可以显著提升可信度；内部价格缺失时只给极小兜底分。"""
     if internal_price is None or internal_price <= 0:
         return 0.05
     if public_price is None or public_price <= 0:
@@ -185,6 +203,7 @@ def price_score(internal_price: Optional[float], public_price: Optional[float]) 
 
 
 def title_score(internal_brand: str, internal_category: str, public_title: str) -> float:
+    """标题命中是品牌和类目命中的补充证据。"""
     if not public_title:
         return 0.0
     title_tokens = tokenize(public_title)
@@ -200,6 +219,7 @@ def title_score(internal_brand: str, internal_category: str, public_title: str) 
 
 
 def evidence_score(candidate: CandidateProduct) -> float:
+    """候选商品的字段越完整，可人工复核的证据越充分。"""
     evidence_count = 0
     if candidate.public_brand:
         evidence_count += 1
@@ -215,6 +235,7 @@ def evidence_score(candidate: CandidateProduct) -> float:
 
 
 def recommend_action(total_score: float) -> str:
+    """把连续分数转换成审核动作建议。"""
     if total_score >= 0.60:
         return "fast_review"
     if total_score >= 0.40:
@@ -223,6 +244,7 @@ def recommend_action(total_score: float) -> str:
 
 
 def build_reason(parts: Dict[str, float]) -> str:
+    """输出命中的评分维度，方便前端给审核员展示评分依据。"""
     labels = {
         "brand_score": "brand",
         "category_score": "category",
@@ -235,6 +257,7 @@ def build_reason(parts: Dict[str, float]) -> str:
 
 
 def score_candidate(product: InternalProduct, candidate: CandidateProduct) -> Dict[str, object]:
+    """计算单个候选商品的总分与评分明细。"""
     parts = {
         "brand_score": brand_score(product.brand, candidate.public_brand, candidate.public_title),
         "category_score": category_score(product.category_name, candidate.public_category),
@@ -243,6 +266,8 @@ def score_candidate(product: InternalProduct, candidate: CandidateProduct) -> Di
         "evidence_score": evidence_score(candidate),
     }
     total_score = round(sum(parts.values()), 2)
+
+    # 当内部商品没有价格时，价格维度不能提供足够约束，因此对总分做上限保护。
     if product.price is None and total_score > 0.85:
         total_score = 0.85
 
@@ -270,6 +295,7 @@ def score_candidate(product: InternalProduct, candidate: CandidateProduct) -> Di
 
 
 def score_candidates(products: Dict[int, InternalProduct], candidates: Iterable[CandidateProduct]) -> List[Dict[str, object]]:
+    """批量评分并按 item_id、总分、商品 id 排序。"""
     rows: List[Dict[str, object]] = []
     for candidate in candidates:
         product = products.get(candidate.item_id)
@@ -287,6 +313,7 @@ def score_candidates(products: Dict[int, InternalProduct], candidates: Iterable[
 
 
 def write_rows(path: Path, rows: List[Dict[str, object]]) -> None:
+    """把评分结果写回 CSV。"""
     fieldnames = [
         "item_id",
         "brand",
@@ -315,7 +342,8 @@ def write_rows(path: Path, rows: List[Dict[str, object]]) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="商品公网映射候选评分脚本")
+    """构造命令行参数解析器。"""
+    parser = argparse.ArgumentParser(description="对公网映射候选商品进行评分")
     parser.add_argument("--products", required=True, help="内部商品快照 CSV 路径")
     parser.add_argument("--candidates", required=True, help="公网候选商品 CSV 路径")
     parser.add_argument("--output", required=True, help="评分结果 CSV 路径")
@@ -323,6 +351,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def resolve_path(base_dir: Path, raw_path: str) -> Path:
+    """把命令行传入的路径解析成可直接访问的绝对路径。"""
     path = Path(raw_path)
     if path.is_absolute():
         return path
@@ -337,6 +366,7 @@ def resolve_path(base_dir: Path, raw_path: str) -> Path:
 
 
 def main() -> None:
+    """脚本入口：读取商品和候选，评分后输出 CSV。"""
     args = build_parser().parse_args()
     base_dir = Path(__file__).resolve().parent
     products_path = resolve_path(base_dir, args.products)
