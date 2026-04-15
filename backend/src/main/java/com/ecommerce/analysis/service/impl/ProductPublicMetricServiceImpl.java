@@ -279,6 +279,9 @@ public class ProductPublicMetricServiceImpl implements ProductPublicMetricServic
         return headerIndex;
     }
 
+    /**
+     * 解析单行映射 CSV，生成待 upsert 的映射实体。
+     */
     private ProductPublicMapping parseMapping(String line, Map<String, Integer> headerIndex) {
         String[] parts = parseCsvLine(line);
         Long itemId = parseLong(valueOf(parts, headerIndex, "item_id"));
@@ -302,6 +305,9 @@ public class ProductPublicMetricServiceImpl implements ProductPublicMetricServic
         return mapping;
     }
 
+    /**
+     * 解析单行公网指标 CSV；若内部尚未确认对应映射，则直接丢弃该行。
+     */
     private ProductPublicMetric parseMetric(String line, Map<String, Integer> headerIndex) {
         String[] parts = parseCsvLine(line);
         Long itemId = parseLong(valueOf(parts, headerIndex, "item_id"));
@@ -329,6 +335,9 @@ public class ProductPublicMetricServiceImpl implements ProductPublicMetricServic
         return metric;
     }
 
+    /**
+     * 解析评分结果 CSV 中的一行，并补齐默认的审核说明字段。
+     */
     private PublicMappingScoreRowVO parseScoreRow(String line, Map<String, Integer> headerIndex) {
         String[] parts = parseCsvLine(line);
         Long itemId = parseLong(valueOf(parts, headerIndex, "item_id"));
@@ -366,6 +375,9 @@ public class ProductPublicMetricServiceImpl implements ProductPublicMetricServic
         return row;
     }
 
+    /**
+     * 把前端评分预览行转换成可入库的正式映射实体。
+     */
     private ProductPublicMapping toConfirmedMapping(PublicMappingScoreRowVO row) {
         if (row == null || row.getItemId() == null) {
             return null;
@@ -390,6 +402,9 @@ public class ProductPublicMetricServiceImpl implements ProductPublicMetricServic
         return mapping;
     }
 
+    /**
+     * 释放同一个公网商品已经绑定到其他内部商品的旧映射，确保绑定关系唯一。
+     */
     private void releaseConflictingSourceProduct(ProductPublicMapping mapping) {
         if (mapping == null || mapping.getItemId() == null) {
             return;
@@ -414,12 +429,18 @@ public class ProductPublicMetricServiceImpl implements ProductPublicMetricServic
         productPublicMappingMapper.deleteById(existing.getId());
     }
 
+    /**
+     * 根据评分行生成简短的审核备注。
+     */
     private String buildVerificationNote(PublicMappingScoreRowVO row) {
         String scoreText = row.getTotalScore() == null ? "unknown" : row.getTotalScore().stripTrailingZeros().toPlainString();
         String reason = defaultIfBlank(row.getScoreReason(), "manual_confirm");
         return abbreviate("页面工作台确认入库; score=" + scoreText + "; reason=" + reason, 255);
     }
 
+    /**
+     * 拼接审核时需要展示的证据摘要。
+     */
     private String buildEvidenceNote(PublicMappingScoreRowVO row) {
         StringBuilder builder = new StringBuilder();
         if (trimToNull(row.getPublicTitle()) != null) {
@@ -434,6 +455,9 @@ public class ProductPublicMetricServiceImpl implements ProductPublicMetricServic
         return abbreviate(builder.toString(), 255);
     }
 
+    /**
+     * 对 CSV 字段做最小转义，避免逗号、引号和换行破坏导出格式。
+     */
     private String csv(Object value) {
         if (value == null) {
             return "";
@@ -445,6 +469,9 @@ public class ProductPublicMetricServiceImpl implements ProductPublicMetricServic
         return text;
     }
 
+    /**
+     * 以统一分隔符拼接备注片段。
+     */
     private void appendWithSeparator(StringBuilder builder, String value) {
         if (builder.length() > 0) {
             builder.append("; ");
@@ -452,6 +479,9 @@ public class ProductPublicMetricServiceImpl implements ProductPublicMetricServic
         builder.append(value);
     }
 
+    /**
+     * 控制备注长度，避免超出数据库字段限制。
+     */
     private String abbreviate(String value, int maxLength) {
         String trimmed = trimToNull(value);
         if (trimmed == null || trimmed.length() <= maxLength) {
@@ -460,6 +490,9 @@ public class ProductPublicMetricServiceImpl implements ProductPublicMetricServic
         return trimmed.substring(0, Math.max(0, maxLength - 3)) + "...";
     }
 
+    /**
+     * 按列名安全读取 CSV 字段值。
+     */
     private String valueOf(String[] parts, Map<String, Integer> headerIndex, String key) {
         Integer index = headerIndex.get(key);
         if (index == null || index < 0 || index >= parts.length) {
@@ -468,6 +501,9 @@ public class ProductPublicMetricServiceImpl implements ProductPublicMetricServic
         return parts[index];
     }
 
+    /**
+     * 去掉首尾空白与包裹引号，并把空串统一转成 null。
+     */
     private String trimToNull(String value) {
         if (value == null) {
             return null;
@@ -479,11 +515,17 @@ public class ProductPublicMetricServiceImpl implements ProductPublicMetricServic
         return trimmed.isEmpty() ? null : trimmed;
     }
 
+    /**
+     * 字段为空时使用兜底值。
+     */
     private String defaultIfBlank(String value, String fallback) {
         String trimmed = trimToNull(value);
         return trimmed == null ? fallback : trimmed;
     }
 
+    /**
+     * 解析整数，同时兼容带人工数量后缀的文本。
+     */
     private Long parseLong(String value) {
         String trimmed = trimToNull(value);
         if (trimmed == null) {
@@ -500,6 +542,9 @@ public class ProductPublicMetricServiceImpl implements ProductPublicMetricServic
         }
     }
 
+    /**
+     * 解析十进制数字。
+     */
     private BigDecimal parseDecimal(String value) {
         String trimmed = trimToNull(value);
         if (trimmed == null) {
@@ -512,6 +557,9 @@ public class ProductPublicMetricServiceImpl implements ProductPublicMetricServic
         }
     }
 
+    /**
+     * 解析百分比；若原始文本带百分号，则自动缩放为 0~1 区间。
+     */
     private BigDecimal parsePercent(String value) {
         BigDecimal decimal = parseDecimal(value);
         if (decimal == null) {
@@ -524,6 +572,9 @@ public class ProductPublicMetricServiceImpl implements ProductPublicMetricServic
         return decimal;
     }
 
+    /**
+     * 解析映射置信度，兼容枚举型人工标记与数值型分数。
+     */
     private BigDecimal parseMappingConfidence(String value) {
         String trimmed = trimToNull(value);
         if (trimmed == null) {
@@ -541,6 +592,9 @@ public class ProductPublicMetricServiceImpl implements ProductPublicMetricServic
         }
     }
 
+    /**
+     * 宽松解析多种时间格式。
+     */
     private LocalDateTime parseDateTime(String value) {
         String trimmed = trimToNull(value);
         if (trimmed == null) {
@@ -561,6 +615,9 @@ public class ProductPublicMetricServiceImpl implements ProductPublicMetricServic
         }
     }
 
+    /**
+     * 规范化平台标识；当前仅接受 jd。
+     */
     private String normalizePlatform(String value) {
         String trimmed = trimToNull(value);
         if (trimmed == null) {
@@ -570,6 +627,9 @@ public class ProductPublicMetricServiceImpl implements ProductPublicMetricServic
         return SUPPORTED_PLATFORM.equals(normalized) ? normalized : null;
     }
 
+    /**
+     * 逐字符解析 CSV 行，兼容带引号和转义双引号的字段。
+     */
     private String[] parseCsvLine(String line) {
         java.util.List<String> columns = new java.util.ArrayList<>();
         StringBuilder current = new StringBuilder();

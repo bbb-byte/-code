@@ -364,12 +364,18 @@ public class PublicTaskServiceImpl implements PublicTaskService {
         }
     }
 
+    /**
+     * 更新任务进度与提示文案。
+     */
     private void updateProgress(PublicTaskStatusVO status, double progress, String message) {
         status.setProgress(progress);
         status.setMessage(message);
         status.setStatus("running");
     }
 
+    /**
+     * 把任务状态切换为成功完成，并附带结果负载。
+     */
     private void completeTask(PublicTaskStatusVO status, String message, Map<String, Object> result) {
         status.setRunning(false);
         status.setProgress(100D);
@@ -379,6 +385,9 @@ public class PublicTaskServiceImpl implements PublicTaskService {
         status.setResult(result);
     }
 
+    /**
+     * 把任务状态切换为失败。
+     */
     private void failTask(PublicTaskStatusVO status, String message) {
         status.setRunning(false);
         status.setStatus("failed");
@@ -386,6 +395,9 @@ public class PublicTaskServiceImpl implements PublicTaskService {
         status.setFinishedAt(System.currentTimeMillis());
     }
 
+    /**
+     * 解析工作区根目录，兼容从 backend 子目录启动服务。
+     */
     private String resolveWorkDir() {
         String workDir = System.getProperty("user.dir");
         if (workDir.endsWith("backend")) {
@@ -394,6 +406,9 @@ public class PublicTaskServiceImpl implements PublicTaskService {
         return workDir;
     }
 
+    /**
+     * 把相对路径解析到工作区根目录下。
+     */
     private String resolveWorkspacePath(String path) {
         if (path == null || path.trim().isEmpty()) {
             return path;
@@ -405,10 +420,16 @@ public class PublicTaskServiceImpl implements PublicTaskService {
         return new File(resolveWorkDir(), path).getAbsolutePath();
     }
 
+    /**
+     * 返回执行 Python 脚本所使用的解释器路径。
+     */
     private String resolvePythonCommand() {
         return "C:\\Users\\86186\\anaconda3\\python.exe";
     }
 
+    /**
+     * 字符串为空时使用兜底值。
+     */
     private String defaultIfBlank(String value, String fallback) {
         if (value == null || value.trim().isEmpty()) {
             return fallback;
@@ -416,6 +437,9 @@ public class PublicTaskServiceImpl implements PublicTaskService {
         return value;
     }
 
+    /**
+     * 执行 Python 脚本并收集标准输出。
+     */
     private ScriptExecution runPythonScript(String workDir, String scriptPath, String... args)
             throws IOException, InterruptedException {
         List<String> command = new ArrayList<>();
@@ -444,6 +468,9 @@ public class PublicTaskServiceImpl implements PublicTaskService {
         return new ScriptExecution(exitCode, finished, output.toString());
     }
 
+    /**
+     * 返回可用的 Node 命令名。
+     */
     private String resolveNodeCommand() {
         String nodeCmd = "node";
         try {
@@ -454,6 +481,9 @@ public class PublicTaskServiceImpl implements PublicTaskService {
         return nodeCmd;
     }
 
+    /**
+     * 执行 Node 脚本并收集标准输出。
+     */
     private ScriptExecution runNodeScript(String workDir, String scriptPath, String... args)
             throws IOException, InterruptedException {
         List<String> command = new ArrayList<>();
@@ -482,6 +512,9 @@ public class PublicTaskServiceImpl implements PublicTaskService {
         return new ScriptExecution(exitCode, finished, output.toString());
     }
 
+    /**
+     * 统计 CSV 数据行数，自动扣除表头。
+     */
     private long countDataRows(String csvPath) throws IOException {
         Path path = Paths.get(csvPath);
         if (!Files.exists(path)) {
@@ -492,6 +525,9 @@ public class PublicTaskServiceImpl implements PublicTaskService {
         }
     }
 
+    /**
+     * 识别公网映射相关表缺失的异常。
+     */
     private boolean isPublicMetricSchemaMissing(Throwable throwable) {
         Throwable current = throwable;
         while (current != null) {
@@ -514,6 +550,9 @@ public class PublicTaskServiceImpl implements PublicTaskService {
     }
 
 
+    /**
+     * 将工作区内的绝对路径转换成相对路径，便于交给 Node 脚本消费。
+     */
     private String toWorkspaceRelative(String workDir, String absolutePath) {
         if (absolutePath == null || absolutePath.trim().isEmpty()) {
             return absolutePath;
@@ -526,6 +565,9 @@ public class PublicTaskServiceImpl implements PublicTaskService {
         return workPath.relativize(targetPath).toString().replace("\\", "/");
     }
 
+    /**
+     * 合并多段脚本输出，保留先前日志。
+     */
     private String mergeLogs(String first, String second) {
         if (first == null || first.trim().isEmpty()) {
             return second;
@@ -536,6 +578,9 @@ public class PublicTaskServiceImpl implements PublicTaskService {
         return first + "\n" + second;
     }
 
+    /**
+     * 脚本执行结果快照。
+     */
     private static class ScriptExecution {
         private final int exitCode;
         private final boolean finished;

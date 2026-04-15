@@ -343,6 +343,9 @@ public class DataImportServiceImpl implements DataImportService {
         return SamplingPlan.fromDateCounts(samplingMetadata.dateRowCounts, maxRows);
     }
 
+    /**
+     * 预扫描文件，统计总行数和各日期的样本量，为抽样方案提供输入。
+     */
     private SamplingMetadata scanSamplingMetadata(String filePath, DatasetFormat format) throws Exception {
         try (BufferedReader counterReader = new BufferedReader(new FileReader(filePath))) {
             String firstLine = readFirstDataLine(counterReader);
@@ -368,6 +371,9 @@ public class DataImportServiceImpl implements DataImportService {
         }
     }
 
+    /**
+     * 从一行数据中提取日期维度并累计计数。
+     */
     private void registerSamplingLine(Map<String, Long> dateRowCounts, String line, DatasetFormat format) {
         if (format != DatasetFormat.ARCHIVE) {
             return;
@@ -379,6 +385,9 @@ public class DataImportServiceImpl implements DataImportService {
         dateRowCounts.merge(dateKey, 1L, Long::sum);
     }
 
+    /**
+     * 从 archive 行中截取 yyyy-MM-dd 作为抽样键。
+     */
     private String extractArchiveDateKey(String line) {
         if (line == null) {
             return null;
@@ -391,6 +400,9 @@ public class DataImportServiceImpl implements DataImportService {
         return eventTime.substring(0, 10);
     }
 
+    /**
+     * 读取首个非空数据行。
+     */
     private String readFirstDataLine(BufferedReader reader) throws Exception {
         String line;
         while ((line = reader.readLine()) != null) {
@@ -401,16 +413,25 @@ public class DataImportServiceImpl implements DataImportService {
         return null;
     }
 
+    /**
+     * 识别当前文件的格式以及可能存在的灵活列映射。
+     */
     private DatasetSpec resolveDatasetSpec(String line) {
         DatasetFormat format = detectFormat(line);
         FlexibleColumnMapping mapping = format == DatasetFormat.MANUAL ? resolveFlexibleColumnMapping(line) : null;
         return new DatasetSpec(format, mapping, isHeaderLine(line, format));
     }
 
+    /**
+     * 供测试或简单调用使用的解析入口。
+     */
     ParsedRow parseCsvLine(String line, DatasetFormat format) {
         return parseCsvLine(line, new DatasetSpec(format, null, false));
     }
 
+    /**
+     * 根据已识别的数据集规格分派到对应的解析逻辑。
+     */
     ParsedRow parseCsvLine(String line, DatasetSpec datasetSpec) {
         if (datasetSpec.format == DatasetFormat.CRAWLED) {
             return parseCrawledCsvLine(line);
@@ -421,6 +442,9 @@ public class DataImportServiceImpl implements DataImportService {
         return parseArchiveCsvLine(line);
     }
 
+    /**
+     * 解析 archive 原始行为数据行。
+     */
     ParsedRow parseArchiveCsvLine(String line) {
         String[] rawParts = line.split(",", -1);
         String[] parts = sanitizeCsvParts(rawParts);
@@ -809,6 +833,9 @@ public class DataImportServiceImpl implements DataImportService {
         return cleaned;
     }
 
+    /**
+     * 尝试按多种时间格式解析事件时间。
+     */
     private ResolvedTimestamp parseEventTime(String rawValue, DatasetFormat format) {
         String value = sanitizeCsvToken(rawValue);
         if (value.isEmpty()) {
@@ -852,6 +879,9 @@ public class DataImportServiceImpl implements DataImportService {
         return null;
     }
 
+    /**
+     * 用秒级时间戳构造统一的时间解析结果。
+     */
     private ResolvedTimestamp buildResolvedTimestamp(long timestamp, boolean preprocessed) {
         if (timestamp <= 0) {
             return null;
@@ -860,6 +890,9 @@ public class DataImportServiceImpl implements DataImportService {
         return new ResolvedTimestamp(timestamp, eventTime, preprocessed);
     }
 
+    /**
+     * 从手工文件的表头中推断列映射关系。
+     */
     FlexibleColumnMapping resolveFlexibleColumnMapping(String headerLine) {
         String[] rawHeaders = headerLine == null ? new String[0] : headerLine.split(",", -1);
         if (rawHeaders.length < 5) {
@@ -902,6 +935,9 @@ public class DataImportServiceImpl implements DataImportService {
                 sessionIndex == null ? -1 : sessionIndex);
     }
 
+    /**
+     * 按别名顺序找到第一个存在的列下标。
+     */
     private Integer findFirstIndex(Map<String, Integer> indices, String... aliases) {
         for (String alias : aliases) {
             Integer index = indices.get(alias);
@@ -912,6 +948,9 @@ public class DataImportServiceImpl implements DataImportService {
         return null;
     }
 
+    /**
+     * 统一表头格式，便于别名匹配。
+     */
     private String normalizeHeaderName(String rawHeader) {
         return sanitizeCsvToken(rawHeader)
                 .toLowerCase()
@@ -920,6 +959,9 @@ public class DataImportServiceImpl implements DataImportService {
                 .replace(".", "");
     }
 
+    /**
+     * 按列下标安全读取值。
+     */
     private String getValue(String[] parts, int index) {
         if (index < 0 || parts.length <= index) {
             return null;
@@ -927,6 +969,9 @@ public class DataImportServiceImpl implements DataImportService {
         return emptyToNull(parts[index]);
     }
 
+    /**
+     * 根据预处理量构造任务完成提示。
+     */
     private String buildCompletionMessage() {
         long cleanedRows = preprocessedRows.get();
         if (cleanedRows <= 0) {
@@ -935,6 +980,9 @@ public class DataImportServiceImpl implements DataImportService {
         return "导入完成，自动预处理 " + cleanedRows + " 条";
     }
 
+    /**
+     * 生成事件唯一键时使用的 MD5 摘要。
+     */
     private String generateMd5(String input) {
         try {
             java.security.MessageDigest md = java.security.MessageDigest.getInstance("MD5");
@@ -949,6 +997,9 @@ public class DataImportServiceImpl implements DataImportService {
         }
     }
 
+    /**
+     * 刷新 MyBatis 批量语句并统计插入成功与重复冲突的数量。
+     */
     private BatchImportStats flushBatch(SqlSession sqlSession, long pendingInsertCount) {
         long insertedCount = 0;
         long duplicateCount = 0;
@@ -976,6 +1027,9 @@ public class DataImportServiceImpl implements DataImportService {
         return new BatchImportStats(insertedCount, duplicateCount);
     }
 
+    /**
+     * 支持导入的数据源类型。
+     */
     enum DatasetFormat {
         ARCHIVE("archive"),
         CRAWLED("crawler"),
@@ -992,6 +1046,9 @@ public class DataImportServiceImpl implements DataImportService {
         }
     }
 
+    /**
+     * 单行解析结果，统一封装行为、商品和预处理状态。
+     */
     static class ParsedRow {
         final UserBehavior behavior;
         final Product product;
@@ -1022,12 +1079,18 @@ public class DataImportServiceImpl implements DataImportService {
         }
     }
 
+    /**
+     * 行解析失败的原因分类。
+     */
     enum ParseFailureReason {
         INVALID_COLUMN_COUNT,
         INVALID_VALUE,
         UNSUPPORTED_BEHAVIOR
     }
 
+    /**
+     * 一次批量 flush 后的写入统计。
+     */
     static class BatchImportStats {
         final long insertedRows;
         final long duplicateRows;
@@ -1038,6 +1101,9 @@ public class DataImportServiceImpl implements DataImportService {
         }
     }
 
+    /**
+     * 文件规格描述，包含格式、列映射和是否有表头。
+     */
     static class DatasetSpec {
         final DatasetFormat format;
         final FlexibleColumnMapping mapping;
@@ -1058,6 +1124,9 @@ public class DataImportServiceImpl implements DataImportService {
         }
     }
 
+    /**
+     * 手工文件的灵活列映射定义。
+     */
     static class FlexibleColumnMapping {
         final int userIdIndex;
         final int itemIdIndex;
@@ -1099,6 +1168,9 @@ public class DataImportServiceImpl implements DataImportService {
         }
     }
 
+    /**
+     * 归一化后的值以及是否发生过预处理。
+     */
     static class NormalizedValue {
         final String value;
         final boolean preprocessed;
@@ -1109,6 +1181,9 @@ public class DataImportServiceImpl implements DataImportService {
         }
     }
 
+    /**
+     * 统一时间解析结果。
+     */
     static class ResolvedTimestamp {
         final long timestamp;
         final LocalDateTime eventTime;
@@ -1121,6 +1196,9 @@ public class DataImportServiceImpl implements DataImportService {
         }
     }
 
+    /**
+     * 导入过程中维护的商品快照，用于决定是否需要补写商品元数据。
+     */
     static class ProductSnapshot {
         private final String brand;
         private final String categoryName;
@@ -1156,6 +1234,9 @@ public class DataImportServiceImpl implements DataImportService {
         }
     }
 
+    /**
+     * 抽样预扫描统计结果。
+     */
     static class SamplingMetadata {
         final long totalRows;
         final Map<String, Long> dateRowCounts;
@@ -1166,6 +1247,9 @@ public class DataImportServiceImpl implements DataImportService {
         }
     }
 
+    /**
+     * 按日期均衡抽样的执行方案。
+     */
     static class SamplingPlan {
         private final long totalRows;
         private final long plannedRows;
@@ -1297,6 +1381,9 @@ public class DataImportServiceImpl implements DataImportService {
         }
     }
 
+    /**
+     * 单日抽样计划。
+     */
     static class DaySamplingPlan {
         final long totalRows;
         final long targetRows;
@@ -1315,6 +1402,9 @@ public class DataImportServiceImpl implements DataImportService {
         }
     }
 
+    /**
+     * 余数分配时的排序单元。
+     */
     static class QuotaRemainder {
         final String date;
         final long remainder;
