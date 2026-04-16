@@ -19,6 +19,11 @@ spring:
     hikari:
       # 将会话级 InnoDB 锁等待超时提高到 300 秒，减少大批量分析时的误超时
       connection-init-sql: SET SESSION innodb_lock_wait_timeout = 300
+      maximum-pool-size: 30
+      minimum-idle: 10
+      connection-timeout: 30000
+      idle-timeout: 600000
+      max-lifetime: 1800000
   
   # Redis配置
   data:

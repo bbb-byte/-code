@@ -17,6 +17,8 @@ from collections import defaultdict
 from pathlib import Path
 from statistics import mean
 
+import matplotlib
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib import rcParams
@@ -42,6 +44,12 @@ RESULT_FILES = {
     "分析接口": RESULTS_DIR / "analysis_result.csv",
     "用户画像接口": RESULTS_DIR / "profile_result.csv",
 }
+
+FALLBACK_SEARCH_ROOTS = [
+    BASE_DIR,
+    Path.cwd(),
+    Path("C:/"),
+]
 
 
 def to_float(value, default=0.0):
@@ -69,20 +77,36 @@ def load_jmeter_csv(path: Path):
     if not path.exists():
         return rows
 
-    with path.open("r", encoding="utf-8-sig", newline="") as fh:
-        reader = csv.DictReader(fh)
-        for row in reader:
-            rows.append(
-                {
-                    "label": row.get("label", "").strip(),
-                    "elapsed": to_float(row.get("elapsed")),
-                    "timestamp": to_float(row.get("timeStamp")),
-                    "success": to_bool(row.get("success")),
-                    "bytes": to_float(row.get("bytes")),
-                    "sent_bytes": to_float(row.get("sentBytes")),
-                    "thread_name": row.get("threadName", "").strip(),
-                }
-            )
+    raw_lines = path.read_text(encoding="utf-8-sig").splitlines()
+    raw_lines = [line for line in raw_lines if line.strip()]
+    if not raw_lines:
+        return rows
+
+    default_headers = [
+        "timeStamp", "elapsed", "label", "responseCode", "responseMessage",
+        "threadName", "dataType", "success", "failureMessage", "bytes",
+        "sentBytes", "grpThreads", "allThreads", "URL", "Latency",
+        "IdleTime", "Connect",
+    ]
+    has_header = raw_lines[0].startswith("timeStamp,")
+
+    if has_header:
+        reader = csv.DictReader(raw_lines)
+    else:
+        reader = csv.DictReader(raw_lines, fieldnames=default_headers)
+
+    for row in reader:
+        rows.append(
+            {
+                "label": row.get("label", "").strip(),
+                "elapsed": to_float(row.get("elapsed")),
+                "timestamp": to_float(row.get("timeStamp")),
+                "success": to_bool(row.get("success")),
+                "bytes": to_float(row.get("bytes")),
+                "sent_bytes": to_float(row.get("sentBytes")),
+                "thread_name": row.get("threadName", "").strip(),
+            }
+        )
     return rows
 
 
@@ -92,9 +116,13 @@ def summarize_rows(rows):
 
     elapsed = [r["elapsed"] for r in rows]
     success_count = sum(1 for r in rows if r["success"])
-    min_ts = min(r["timestamp"] for r in rows if r["timestamp"])
-    max_ts = max(r["timestamp"] for r in rows if r["timestamp"])
-    duration_sec = max((max_ts - min_ts) / 1000.0, 1.0) if min_ts and max_ts else 1.0
+    timestamps = [r["timestamp"] for r in rows if r["timestamp"]]
+    if timestamps:
+        min_ts = min(timestamps)
+        max_ts = max(timestamps)
+        duration_sec = max((max_ts - min_ts) / 1000.0, 1.0)
+    else:
+        duration_sec = 1.0
 
     return {
         "samples": len(rows),
@@ -125,10 +153,35 @@ def load_all_data():
         if rows:
             grouped[name] = rows
     if not grouped:
+        fallback_matches = find_result_files()
+        if fallback_matches:
+            details = "\n".join(f"- {name}: {path}" for name, path in fallback_matches.items())
+            raise FileNotFoundError(
+                f"未在默认目录找到 JMeter 结果文件：{RESULTS_DIR}\n"
+                f"但我在其他位置发现了这些结果文件，请把它们复制到上述目录，或直接修改脚本读取路径：\n{details}"
+            )
         raise FileNotFoundError(
             f"未找到可用的 JMeter 结果文件，请先运行压测并确认结果输出到 {RESULTS_DIR}"
         )
     return grouped
+
+
+def find_result_files():
+    found = {}
+    for root in FALLBACK_SEARCH_ROOTS:
+        try:
+            if not root.exists():
+                continue
+            for filename in ("login_result.csv", "analysis_result.csv", "profile_result.csv", "all_summary.csv"):
+                if filename in found:
+                    continue
+                matches = list(root.rglob(filename))
+                if matches:
+                    matches.sort(key=lambda path: path.stat().st_mtime, reverse=True)
+                    found[filename] = matches[0]
+        except Exception:
+            continue
+    return found
 
 
 def plot_thread_group_summary(grouped):
