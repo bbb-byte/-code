@@ -1,6 +1,17 @@
 import http from '@/utils/http'
 
 /**
+ * 上传映射用 CSV 文件，返回服务器存储路径。
+ */
+export function uploadMappingFile(file) {
+    const formData = new FormData()
+    formData.append('file', file)
+    return http.post('/data/mapping/upload', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+    })
+}
+
+/**
  * 启动 CSV 导入任务。
  */
 export function importData(filePath, batchSize = 5000, maxRows = 0) {
@@ -12,6 +23,18 @@ export function importData(filePath, batchSize = 5000, maxRows = 0) {
 /**
  * 获取导入任务进度。
  */
+export function uploadImportFile(file, batchSize = 5000, maxRows = 0) {
+    const formData = new FormData()
+    formData.append('file', file)
+    formData.append('batchSize', String(batchSize))
+    formData.append('maxRows', String(maxRows))
+    return http.post('/data/import/upload', formData, {
+        headers: {
+            'Content-Type': 'multipart/form-data'
+        }
+    })
+}
+
 export function getImportProgress() {
     return http.get('/data/import/progress')
 }
@@ -30,6 +53,10 @@ export function analyzeData(clusterK = 5) {
     return http.post('/data/analyze', null, { params: { clusterK } })
 }
 
+export function startAnalyzeTask(clusterK = 5) {
+    return http.post('/data/analyze-task', null, { params: { clusterK } })
+}
+
 /**
  * 启动公网满意度抓取任务。
  */
@@ -42,7 +69,7 @@ export function crawlData(mappingPath, outputDir, fixtureDir) {
 /**
  * 复用当前浏览器搜索页抓取公网指标。
  */
-export function crawlAttachedSearchData(candidatePath, outputPath, cdpUrl = 'http://127.0.0.1:9222') {
+export function crawlAttachedSearchData(candidatePath, outputPath, cdpUrl = 'http://host.docker.internal:9222') {
     return http.post('/data/crawl-attached-search', null, {
         params: { candidatePath, outputPath, cdpUrl }
     })
@@ -51,9 +78,9 @@ export function crawlAttachedSearchData(candidatePath, outputPath, cdpUrl = 'htt
 /**
  * 召回公网映射候选商品；可选先从原始行为文件自动生成内部商品快照。
  */
-export function recallPublicMappingCandidates(productPath, outputPath, fixtureDir, sourceDataPath = '', generatedProductPath = '', topK = 5, maxProducts = 50) {
+export function recallPublicMappingCandidates(productPath, outputPath, fixtureDir, sourceDataPath = '', generatedProductPath = '', topK = 5, maxProducts = 50, cdpUrl = '') {
     return http.post('/data/public-mapping/recall', null, {
-        params: { productPath, outputPath, fixtureDir, sourceDataPath, generatedProductPath, topK, maxProducts }
+        params: { productPath, outputPath, fixtureDir, sourceDataPath, generatedProductPath, topK, maxProducts, cdpUrl }
     })
 }
 

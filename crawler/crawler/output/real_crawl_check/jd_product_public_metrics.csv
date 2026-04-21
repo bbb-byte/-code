@@ -1,3 +1,0 @@
-item_id,source_platform,source_product_id,source_url,positive_rate,review_count,shop_score,rating_text,crawl_status,raw_payload,crawled_at
-1001588,jd,10192521777683,https://item.jd.com/10192521777683.html,,,,,failed,"{""error"": ""无法解析京东评价摘要响应""}",2026-04-10T12:11:04Z
-1002098,jd,10215516579046,https://item.jd.com/10215516579046.html,,,,,failed,"{""error"": ""无法解析京东评价摘要响应""}",2026-04-10T12:11:07Z

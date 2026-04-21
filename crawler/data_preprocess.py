@@ -37,7 +37,7 @@ CSV_FILE = '../archive/2020-Apr-demo.csv'
 
 def load_data(file_path):
     """
-    5.1 数据加载与格式统一
+    数据加载与格式统一
     加载原始电子商务 archive 数据集，并清洗重命名为本系统适用格式
     原始: event_time,event_type,product_id,category_id,category_code,brand,price,user_id,user_session
     目标: user_id, item_id, category_id, behavior_type, timestamp, unit_price, qty, brand, category_name
@@ -98,7 +98,7 @@ def load_data(file_path):
 
 def handle_duplicates(df):
     """
-    5.2.1 重复值处理
+    重复值处理
     """
     print("\n" + "=" * 60)
     
@@ -135,7 +135,7 @@ def handle_duplicates(df):
 
 def handle_missing_values(df):
     """
-    5.2.2 缺失值处理
+    缺失值处理
     """
     print("\n" + "=" * 60)
     
@@ -223,7 +223,7 @@ def handle_missing_values(df):
 
 def handle_outliers(df):
     """
-    5.2.3 异常值检测与处理
+    异常值检测与处理
     """
     print("\n" + "=" * 60)
     
@@ -307,7 +307,7 @@ def handle_outliers(df):
 
 def convert_data_types(df):
     """
-    5.2.4 数据类型转换
+    数据类型转换
     """
     print("\n" + "=" * 60)
     
@@ -354,7 +354,7 @@ def convert_data_types(df):
 
 def normalize_data(df):
     """
-    5.2.5 数据归一化
+    数据归一化
     """
     print("\n" + "=" * 60)
     

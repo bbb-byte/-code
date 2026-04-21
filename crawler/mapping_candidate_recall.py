@@ -52,6 +52,7 @@ class JDCandidateRecall:
         headless: bool = False,
         use_existing_browser: bool = True,
         cdp_port: int = 9222,
+        cdp_host: str = "127.0.0.1",
     ):
         self.timeout = timeout
         self.fixture_dir = fixture_dir
@@ -66,6 +67,7 @@ class JDCandidateRecall:
         self.headless = headless
         self.use_existing_browser = use_existing_browser
         self.cdp_port = cdp_port
+        self.cdp_host = cdp_host
         self._owns_browser = False  # 是否由脚本自己启动的浏览器（决定退出时是否关闭）
         self._search_tab = None     # 用于搜索的专用标签页
         self._cancel_signal_path: Optional[Path] = None  # 取消信号文件路径
@@ -82,47 +84,62 @@ class JDCandidateRecall:
             return
 
         # 专用的 Debug Profile 目录（登录态在这里持久保存，下次不用重新登录）
-        debug_profile_dir = str(Path.home() / "AppData" / "Local" / "Google" / "Chrome" / "Debug Profile")
+        import platform
+        is_linux = platform.system() == "Linux"
+        if is_linux:
+            debug_profile_dir = str(Path.home() / ".config" / "chromium-debug-profile")
+        else:
+            debug_profile_dir = str(Path.home() / "AppData" / "Local" / "Google" / "Chrome" / "Debug Profile")
+
+        def _make_options(port: int) -> ChromiumOptions:
+            co = ChromiumOptions()
+            # 浏览器路径：优先用显式指定的，其次 Linux 下自动找 chromium
+            bp = self.browser_path
+            if not bp and is_linux:
+                import shutil
+                bp = shutil.which("chromium") or shutil.which("google-chrome") or ""
+            if bp:
+                co.set_browser_path(bp)
+            co.set_local_port(port)
+            co.set_user_data_path(debug_profile_dir)
+            if self.headless:
+                co.headless()
+            if is_linux:
+                co.set_argument("--no-sandbox")
+                co.set_argument("--disable-dev-shm-usage")
+            return co
 
         if self.use_existing_browser:
-            # 第一步：尝试连接已经在运行的 Chrome
+            # 第一步：尝试连接已经在运行的 Chrome（支持远程 host）
             try:
                 co = ChromiumOptions()
-                co.set_local_port(self.cdp_port)
+                if self.cdp_host and self.cdp_host not in ("127.0.0.1", "localhost"):
+                    co.set_address(f"{self.cdp_host}:{self.cdp_port}")
+                else:
+                    co.set_local_port(self.cdp_port)
                 self.browser = Chromium(co)
                 self._owns_browser = False
-                logger.info("✓ 已成功接管现有 Chrome 浏览器（端口 %d）", self.cdp_port)
+                logger.info("✓ 已成功接管现有 Chrome 浏览器（%s:%d）", self.cdp_host, self.cdp_port)
                 return
             except Exception:
                 logger.info("未检测到已运行的调试 Chrome，正在自动启动...")
 
             # 第二步：自动启动带调试端口的 Chrome
             try:
-                co = ChromiumOptions()
-                browser_path = self.browser_path or r"C:\Program Files\Google\Chrome\Application\chrome.exe"
-                co.set_browser_path(browser_path)
-                co.set_local_port(self.cdp_port)
-                co.set_user_data_path(debug_profile_dir)
-                if self.headless:
-                    co.headless()
+                co = _make_options(self.cdp_port)
                 self.browser = Chromium(co)
                 self._owns_browser = True
                 logger.info("✓ 已自动启动带调试端口的 Chrome（端口 %d）", self.cdp_port)
                 logger.info("  登录态保存在: %s", debug_profile_dir)
-                logger.info("  首次使用请在弹出的 Chrome 中登录京东")
+                if not self.headless:
+                    logger.info("  首次使用请在弹出的 Chrome 中登录京东")
                 return
             except Exception as e:
                 logger.warning("自动启动 Chrome 失败: %s", e)
                 logger.info("正在回退到备用端口的独立浏览器模式...")
 
         # 回退：启动独立的 Chrome 实例（备用端口）
-        co = ChromiumOptions()
-        browser_path = self.browser_path or r"C:\Program Files\Google\Chrome\Application\chrome.exe"
-        co.set_browser_path(browser_path)
-        co.set_local_port(19222)
-        co.set_user_data_path(debug_profile_dir)
-        if self.headless:
-            co.headless()
+        co = _make_options(19222)
         self.browser = Chromium(co)
         self._owns_browser = True
         logger.info("Chrome 浏览器已独立启动（备用端口 19222）")
@@ -175,6 +192,22 @@ class JDCandidateRecall:
             tab.wait(random.uniform(1, 2))
         except Exception:
             pass
+
+        # 检测是否已登录（未登录时搜索结果质量差且易被拦截）
+        page_html = tab.html or ""
+        is_logged_in = "nickname" in page_html or "my.jd.com" in page_html or "用户名" in page_html
+        not_logged_in = "passport.jd.com" in page_html or "请登录" in page_html or "登录/注册" in page_html
+        if not_logged_in or not is_logged_in:
+            logger.warning("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+            logger.warning("⚠️  检测到京东未登录，搜索结果可能受限或被拦截")
+            logger.warning("如需登录，请执行以下步骤：")
+            logger.warning("  1. docker exec -it ecommerce-public-task-worker bash")
+            logger.warning("  2. 在容器内用 cookies 注入或手动配置登录态")
+            logger.warning("  当前将继续尝试以未登录方式召回，结果可能不完整")
+            logger.warning("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        else:
+            logger.info("✓ 京东已登录，继续搜索")
+
         logger.info("首页热身完成，即将开始搜索")
 
     def _backoff_wait(self, attempt: int) -> None:
@@ -397,8 +430,13 @@ class JDCandidateRecall:
             # 点击搜索按钮 —— 兼容新旧版
             search_btn = self._find_search_button(tab)
             if search_btn:
-                search_btn.click()
-                logger.debug("已点击搜索按钮")
+                try:
+                    search_btn.click()
+                    logger.debug("已点击搜索按钮")
+                except Exception:
+                    # 无头模式下按钮可能无实际尺寸，回退到回车键
+                    logger.debug("搜索按钮点击失败（可能无头模式布局问题），改用回车键")
+                    search_box.input('\n')
             else:
                 # 如果实在找不到按钮，按回车键提交
                 search_box.input('\n')
@@ -670,7 +708,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--timeout", default=DEFAULT_TIMEOUT, type=int, help="HTTP timeout in seconds")
     parser.add_argument("--browser-path", default="", help="浏览器可执行文件路径")
     parser.add_argument("--headless", action="store_true", help="无头模式运行")
-    parser.add_argument("--cdp-port", default=9222, type=int, help="Chrome 调试端口（默认 9222），用于接管已打开的浏览器")
+    parser.add_argument("--cdp-url", default="", help="接管已有浏览器的 CDP 地址，格式 host:port，例如 host.docker.internal:9222 或 127.0.0.1:9222")
+    parser.add_argument("--cdp-port", default=9222, type=int, help="Chrome 调试端口（默认 9222），--cdp-url 未填时使用")
     parser.add_argument("--standalone", action="store_true", help="不接管现有浏览器，启动独立 Chrome 实例")
     return parser
 
@@ -694,14 +733,27 @@ def main() -> None:
     product_list = list(products.values())
     if args.max_products and args.max_products > 0:
         product_list = product_list[:args.max_products]
+    # 解析 CDP 地址：--cdp-url 优先，否则用 --cdp-port
+    cdp_host = "127.0.0.1"
+    cdp_port = args.cdp_port
+    if args.cdp_url:
+        parts = args.cdp_url.rsplit(":", 1)
+        if len(parts) == 2 and parts[1].isdigit():
+            cdp_host = parts[0].lstrip("http://").lstrip("https://")
+            cdp_port = int(parts[1])
+        else:
+            cdp_host = args.cdp_url
+    use_existing = not args.standalone
+
     recall = JDCandidateRecall(
         timeout=args.timeout,
         fixture_dir=fixture_dir,
         allow_sample_fallback=args.allow_sample_fallback,
         browser_path=args.browser_path,
         headless=args.headless,
-        use_existing_browser=not args.standalone,
-        cdp_port=args.cdp_port,
+        use_existing_browser=use_existing,
+        cdp_port=cdp_port,
+        cdp_host=cdp_host,
     )
     recall.set_debug_dir(debug_dir)
     recall._cancel_signal_path = output_path.parent / ".cancel_signal"

@@ -74,6 +74,23 @@ code/
 ```bash
 ./start.sh
 ```
+Windows 可使用：
+```powershell
+.\start-windows.ps1
+```
+或：
+```bat
+start-windows.bat
+```
+
+这些脚本会自动完成以下操作：
+
+- 检查 Docker / Docker Desktop 是否可用
+- 若 `.env` 不存在，则从 `.env.example` 自动生成
+- 自动创建 `runtime/browser-profile` 目录
+- 统一执行 `docker compose up -d --build`
+- 一次性启动 `redis`、`backend`、`public-task-worker`、`frontend`
+- 后端通过 `.env` 中的 `MYSQL_*` 配置连接宿主机 MySQL，不再额外启动 MySQL 容器
 该脚本会自动检查 Docker 环境、启动数据库容器，并在新终端窗口中启动前后端服务。
 
 ### 2. 手动启动
@@ -107,13 +124,13 @@ npm run dev
 
 ```bash
 # 一键启动所有服务
-docker-compose up -d
+docker compose up -d --build
 
 # 查看日志
-docker-compose logs -f
+docker compose logs -f
 
 # 停止服务
-docker-compose down
+docker compose down --remove-orphans
 ```
 
 ## 数据导入
@@ -174,3 +191,129 @@ docker-compose down
 ## License
 
 MIT License
+
+## Start / Stop Notes
+
+- Start scripts now use Docker Compose to start `redis`, `backend`, `public-task-worker`, and `frontend`.
+- Local MySQL is not started by Docker. Please make sure your host MySQL service is already running before executing `start.sh`, `start-windows.ps1`, or `start-windows.bat`.
+- Stop scripts now use `docker compose down --remove-orphans` to stop the project containers cleanly.
+- Local MySQL is not managed by the stop scripts and will remain running.
+- Current access addresses after startup:
+  Frontend: `http://localhost`
+  Backend: `http://localhost:8080/api`
+  Swagger: `http://localhost:8080/api/swagger-ui.html`
+  Worker health: `http://localhost:8090/health`
+
+## 公网任务运行配置
+
+为避免把作者本机路径硬编码进项目，公网任务相关脚本现已统一改为通过环境变量读取运行配置，并支持通过独立 `worker` 容器执行。
+
+### 1. 配置环境变量
+
+先将 `.env.example` 复制为 `.env`，再按当前机器或容器环境修改配置项。
+
+支持的环境变量：
+
+- `PUBLIC_TASK_PYTHON`：后端或 `worker` 执行公网任务时使用的 Python 解释器
+- `PUBLIC_TASK_BROWSER_PATH`：浏览器可执行文件的显式路径
+- `PUBLIC_TASK_BROWSER_CHANNEL`：Playwright 自动发现浏览器时使用的通道，例如 `chrome`
+- `PUBLIC_TASK_BROWSER_PROFILE_DIR`：浏览器 Profile 目录，用于复用登录态和缓存
+- `PUBLIC_TASK_WORKER_URL`：后端转发公网任务到 `worker` 的地址
+- `PUBLIC_TASK_WORKSPACE_ROOT`：容器内工作区根目录
+
+推荐配置示例：
+
+```bash
+# Linux / Docker
+PUBLIC_TASK_PYTHON=/usr/bin/python3
+PUBLIC_TASK_BROWSER_PATH=/usr/bin/chromium
+PUBLIC_TASK_BROWSER_CHANNEL=chrome
+PUBLIC_TASK_BROWSER_PROFILE_DIR=/workspace/runtime/browser-profile
+PUBLIC_TASK_WORKER_URL=http://public-task-worker:8090
+PUBLIC_TASK_WORKSPACE_ROOT=/workspace
+```
+
+```powershell
+# Windows 本机开发
+$env:PUBLIC_TASK_PYTHON="C:/Python311/python.exe"
+$env:PUBLIC_TASK_BROWSER_PATH="C:/Program Files/Google/Chrome/Application/chrome.exe"
+$env:PUBLIC_TASK_BROWSER_CHANNEL="chrome"
+$env:PUBLIC_TASK_BROWSER_PROFILE_DIR="./runtime/browser-profile"
+```
+
+### 2. Docker 启动方式
+
+执行以下命令启动：
+
+```bash
+docker-compose up -d --build
+```
+
+查看关键服务状态：
+
+```bash
+docker-compose ps
+docker-compose logs -f backend
+docker-compose logs -f public-task-worker
+```
+
+### 3. 当前容器分工
+
+- `backend`：负责接口、任务编排、结果入库
+- `public-task-worker`：负责执行 Python / Node / Chromium 公网任务脚本
+- `redis`：负责缓存
+- 宿主机 MySQL：负责数据库，容器通过 `host.docker.internal` 和 `.env` 中的 `MYSQL_*` 配置连接
+- `frontend`：负责前端页面服务
+
+### 4. 当前 Docker 编排说明
+
+- `docker-compose.yml` 已将 `PUBLIC_TASK_*` 环境变量透传到 `backend`
+- `backend` 挂载整个项目目录到 `/workspace`，用于统一访问脚本、输入输出目录和运行时文件
+- `public-task-worker` 镜像在构建阶段会安装 `crawler/requirements.txt` 与 `frontend/package.json` 中的任务依赖
+- `public-task-worker` 运行阶段挂载 `crawler/`、`frontend/scripts/`、`runtime/browser-profile/`
+- 后端通过 `PUBLIC_TASK_WORKER_URL` 将公网任务转发给 `worker` 执行
+
+这样处理后，公网任务不再依赖 `backend` 镜像内必须安装 Python、Node、Chromium，而是交由独立 `worker` 容器执行，更便于跨机器复现与后续扩展。
+
+### 5. 运行后如何验证
+
+可以按下面顺序检查：
+
+1. 执行 `docker-compose ps`，确认 `backend`、`public-task-worker`、`redis` 均为运行状态。
+2. 确认宿主机 MySQL 服务已启动，并且 `.env` 中的 `MYSQL_HOST`、`MYSQL_PORT`、`MYSQL_DATABASE`、`MYSQL_USERNAME`、`MYSQL_PASSWORD` 配置正确。
+3. 查看 `public-task-worker` 日志，确认服务正常启动，没有 Python、npm、Chromium 缺失报错。
+4. 访问后端接口或页面，触发一次公网任务。
+5. 检查 `crawler/output/` 是否生成结果文件，检查 `runtime/browser-profile/` 是否生成浏览器状态目录。
+
+### 6. 常见问题排查
+
+- 若后端提示无法连接 `worker`，先检查 `PUBLIC_TASK_WORKER_URL` 是否与 `docker-compose` 中服务名一致。
+- 若 `worker` 内浏览器启动失败，优先检查 `PUBLIC_TASK_BROWSER_PATH` 是否正确，或暂时留空改用自动发现。
+- 若脚本报依赖缺失，需要重新执行 `docker-compose up -d --build`，确保 `worker` 镜像已重新构建。
+- 若输出路径不一致，重点检查 `PUBLIC_TASK_WORKSPACE_ROOT`、挂载目录和传入的相对路径是否都基于 `/workspace`。
+
+### 7. 健康检查与报错改进
+
+当前后端在派发公网任务前，会先访问 `worker` 的 `/health` 接口做可用性检查。
+
+如果出现异常，通常会直接区分为以下几类：
+
+- `worker` 不可达：通常表示 `public-task-worker` 容器未启动，或 `PUBLIC_TASK_WORKER_URL` 配置错误
+- Python 解释器不可用：通常表示 `PUBLIC_TASK_PYTHON` 配错，或当前运行环境未安装 Python
+- 浏览器启动失败：通常表示 `PUBLIC_TASK_BROWSER_PATH` 不正确，或容器内浏览器依赖未就绪
+- 脚本执行超时：后端会明确提示超时时间和对应命令，便于定位是网络、页面加载还是风控问题
+
+### 8. 答辩说明材料
+
+如需说明“工程质量与复现性”改造思路，可参考：
+
+- [工程质量与复现性答辩说明](D:/桌面/论文/code/-code/docs/DEFENSE_ENGINEERING_NOTES.md)
+# 宿主机登录 Chrome（供 Docker worker 通过 CDP 接管）
+
+在 Windows 宿主机上启动已登录的 Chrome 时，推荐使用：
+
+```powershell
+chrome.exe --remote-debugging-address=0.0.0.0 --remote-debugging-port=9222 --user-data-dir=C:\chrome-jd-profile
+```
+
+如果只写 `--remote-debugging-port=9222`，Chrome 往往只监听 `127.0.0.1`，`public-task-worker` 容器通过 `host.docker.internal` 访问时会看到 `ECONNREFUSED 192.168.65.254:9222` 一类错误。

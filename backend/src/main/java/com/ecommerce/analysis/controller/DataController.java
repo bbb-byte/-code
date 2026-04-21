@@ -7,7 +7,6 @@ import com.ecommerce.analysis.entity.UserBehavior;
 import com.ecommerce.analysis.service.DataImportService;
 import com.ecommerce.analysis.service.ProductPublicMetricService;
 import com.ecommerce.analysis.service.PublicTaskService;
-import com.ecommerce.analysis.service.RFMService;
 import com.ecommerce.analysis.service.UserBehaviorService;
 import com.ecommerce.analysis.vo.ImportStatusVO;
 import com.ecommerce.analysis.vo.PublicMappingScorePreviewVO;
@@ -17,14 +16,20 @@ import io.swagger.annotations.ApiOperation;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.util.StringUtils;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.io.File;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.sql.SQLSyntaxErrorException;
 import java.util.Collections;
 import java.util.HashMap;
@@ -43,9 +48,6 @@ public class DataController {
 
     @Autowired
     private DataImportService dataImportService;
-
-    @Autowired
-    private RFMService rfmService;
 
     @Autowired
     private UserBehaviorService userBehaviorService;
@@ -73,7 +75,6 @@ public class DataController {
             return Result.error("已有导入任务正在执行");
         }
 
-        // 控制器只负责发起任务，导入过程由异步服务自己维护进度和状态。
         dataImportService.importCsvData(filePath, batchSize, maxRows);
 
         Map<String, Object> result = new HashMap<>();
@@ -81,8 +82,69 @@ public class DataController {
         result.put("filePath", filePath);
         result.put("batchSize", batchSize);
         result.put("maxRows", maxRows);
-
         return Result.success("导入任务已启动", result);
+    }
+
+    @ApiOperation("上传映射用 CSV 文件")
+    @PostMapping("/mapping/upload")
+    public Result<Map<String, Object>> uploadMappingFile(@RequestParam("file") MultipartFile file) {
+        if (file == null || file.isEmpty()) {
+            return Result.error("请先选择要上传的 CSV 文件");
+        }
+
+        try {
+            String originalFilename = StringUtils.hasText(file.getOriginalFilename())
+                    ? file.getOriginalFilename()
+                    : "mapping.csv";
+            String sanitizedFilename = originalFilename.replaceAll("[^a-zA-Z0-9._-]", "_");
+            Path uploadDir = Path.of(resolveWorkDir(), "runtime", "uploads", "mappings");
+            Files.createDirectories(uploadDir);
+
+            Path storedPath = uploadDir.resolve(System.currentTimeMillis() + "_" + sanitizedFilename);
+            Files.copy(file.getInputStream(), storedPath, StandardCopyOption.REPLACE_EXISTING);
+
+            Map<String, Object> result = new HashMap<>();
+            result.put("serverPath", storedPath.toAbsolutePath().toString());
+            result.put("originalFileName", file.getOriginalFilename());
+            log.info("映射文件已上传: originalFileName={}, storedPath={}", file.getOriginalFilename(), storedPath);
+            return Result.success("文件上传成功", result);
+        } catch (IOException e) {
+            log.error("保存映射上传文件失败", e);
+            return Result.error("保存上传文件失败: " + e.getMessage());
+        }
+    }
+
+    @ApiOperation("上传并导入 CSV 数据")
+    @PostMapping("/import/upload")
+    public Result<Map<String, Object>> uploadAndImportData(
+            @RequestParam("file") MultipartFile file,
+            @RequestParam(defaultValue = "5000") int batchSize,
+            @RequestParam(defaultValue = "0") long maxRows) {
+
+        if (file == null || file.isEmpty()) {
+            return Result.error("请先选择要上传的 CSV 文件");
+        }
+        if (dataImportService.isImporting()) {
+            return Result.error("已有导入任务正在执行");
+        }
+
+        try {
+            String storedPath = storeUploadedImportFile(file);
+            log.info("收到上传导入请求: originalFileName={}, storedPath={}, batchSize={}, maxRows={}",
+                    file.getOriginalFilename(), storedPath, batchSize, maxRows);
+            dataImportService.importCsvData(storedPath, batchSize, maxRows);
+
+            Map<String, Object> result = new HashMap<>();
+            result.put("message", "导入任务已启动");
+            result.put("filePath", storedPath);
+            result.put("originalFileName", file.getOriginalFilename());
+            result.put("batchSize", batchSize);
+            result.put("maxRows", maxRows);
+            return Result.success("文件上传成功，导入任务已启动", result);
+        } catch (IOException e) {
+            log.error("保存上传导入文件失败", e);
+            return Result.error("保存上传文件失败: " + e.getMessage());
+        }
     }
 
     /**
@@ -128,7 +190,7 @@ public class DataController {
     public Result<Map<String, Object>> crawlAttachedSearchData(
             @RequestParam(defaultValue = "crawler/output/recalled_candidates.browser.csv") String candidatePath,
             @RequestParam(defaultValue = "crawler/output/jd_search_browser_metrics_attached.csv") String outputPath,
-            @RequestParam(defaultValue = "http://127.0.0.1:9222") String cdpUrl) {
+            @RequestParam(defaultValue = "http://host.docker.internal:9222") String cdpUrl) {
         String taskId = publicTaskService.startAttachedSearchCrawlTask(candidatePath, outputPath, cdpUrl);
         Map<String, Object> result = new HashMap<>();
         result.put("taskId", taskId);
@@ -148,9 +210,10 @@ public class DataController {
             @RequestParam(defaultValue = "") String sourceDataPath,
             @RequestParam(defaultValue = "crawler/output/internal_products.auto.csv") String generatedProductPath,
             @RequestParam(defaultValue = "5") int topK,
-            @RequestParam(defaultValue = "50") int maxProducts) {
+            @RequestParam(defaultValue = "50") int maxProducts,
+            @RequestParam(defaultValue = "") String cdpUrl) {
         String taskId = publicTaskService.startRecallTask(
-                productPath, outputPath, fixtureDir, sourceDataPath, generatedProductPath, topK, maxProducts);
+                productPath, outputPath, fixtureDir, sourceDataPath, generatedProductPath, topK, maxProducts, cdpUrl);
         Map<String, Object> result = new HashMap<>();
         result.put("taskId", taskId);
         result.put("status", "running");
@@ -286,31 +349,34 @@ public class DataController {
      */
     @ApiOperation("获取最新行为数据")
     @GetMapping("/latest")
-    public Result<List<UserBehavior>> getLatestBehaviors(
-            @RequestParam(defaultValue = "10") int limit) {
+    public Result<List<UserBehavior>> getLatestBehaviors(@RequestParam(defaultValue = "10") int limit) {
         return Result.success(userBehaviorService.getLatestBehaviors(limit));
     }
 
-    /**
-     * 串行执行 RFM 计算和聚类，是后台“一键分析”的总入口。
-     */
     @ApiOperation("执行完整的数据分析流程")
     @PostMapping("/analyze")
-    public Result<Void> analyzeData(@RequestParam(defaultValue = "5") int clusterK) {
-        try {
-            // 先刷新每个用户的 R/F/M 指标，再基于评分结果做聚类。
-            rfmService.calculateAllUserRFM();
-            rfmService.performKMeansClustering(clusterK);
-            return Result.success("数据分析完成", null);
-        } catch (Exception e) {
-            return Result.error("数据分析失败: " + e.getMessage());
-        }
+    public Result<Map<String, Object>> analyzeData(@RequestParam(defaultValue = "5") int clusterK) {
+        return startAnalyzeTask(clusterK);
+    }
+
+    @ApiOperation("启动数据分析后台任务")
+    @PostMapping("/analyze-task")
+    public Result<Map<String, Object>> startAnalyzeTask(@RequestParam(defaultValue = "5") int clusterK) {
+        String taskId = publicTaskService.startAnalyzeTask(clusterK);
+        Map<String, Object> result = new HashMap<>();
+        result.put("taskId", taskId);
+        result.put("status", "running");
+        return Result.success("数据分析任务已启动", result);
     }
 
     /**
      * 推导工作区根目录，兼容从 backend 子目录启动的情况。
      */
     private String resolveWorkDir() {
+        String configured = System.getenv("PUBLIC_TASK_WORKSPACE_ROOT");
+        if (configured != null && !configured.trim().isEmpty()) {
+            return new File(configured.trim()).getAbsolutePath();
+        }
         String workDir = System.getProperty("user.dir");
         if (workDir.endsWith("backend")) {
             workDir = workDir.substring(0, workDir.length() - 8);
@@ -330,6 +396,19 @@ public class DataController {
             return file.getAbsolutePath();
         }
         return new File(resolveWorkDir(), path).getAbsolutePath();
+    }
+
+    private String storeUploadedImportFile(MultipartFile file) throws IOException {
+        String originalFilename = StringUtils.hasText(file.getOriginalFilename())
+                ? file.getOriginalFilename()
+                : "import.csv";
+        String sanitizedFilename = originalFilename.replaceAll("[^a-zA-Z0-9._-]", "_");
+        Path uploadDir = Path.of(resolveWorkDir(), "runtime", "uploads", "imports");
+        Files.createDirectories(uploadDir);
+
+        Path storedPath = uploadDir.resolve(System.currentTimeMillis() + "_" + sanitizedFilename);
+        Files.copy(file.getInputStream(), storedPath, StandardCopyOption.REPLACE_EXISTING);
+        return storedPath.toAbsolutePath().toString();
     }
 
     /**

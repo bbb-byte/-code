@@ -9,10 +9,12 @@ public interface PublicTaskService {
 
     String startCrawlTask(String mappingPath, String outputDir, String fixtureDir);
 
+    String startAnalyzeTask(int clusterK);
+
     String startAttachedSearchCrawlTask(String candidatePath, String outputPath, String cdpUrl);
 
     String startRecallTask(String productPath, String outputPath, String fixtureDir, String sourceDataPath,
-            String generatedProductPath, int topK, int maxProducts);
+            String generatedProductPath, int topK, int maxProducts, String cdpUrl);
 
     String startScoreTask(String productPath, String candidatePath, String outputPath);
 

@@ -1,37 +1,13 @@
-version: '3.8'
-
 services:
-  # MySQL数据库
-  mysql:
-    image: mysql:8.0
-    container_name: ecommerce-mysql
-    restart: always
-    environment:
-      MYSQL_ROOT_PASSWORD: root123
-      MYSQL_DATABASE: ecommerce_analysis
-      TZ: Asia/Shanghai
-    ports:
-      - "3306:3306"
-    volumes:
-      - mysql_data:/var/lib/mysql
-      - ./backend/src/main/resources/sql/init.sql:/docker-entrypoint-initdb.d/init.sql
-    command: --default-authentication-plugin=mysql_native_password
-    networks:
-      - ecommerce-network
-
-  # Redis缓存
   redis:
     image: redis:7-alpine
     container_name: ecommerce-redis
     restart: always
-    ports:
-      - "6379:6379"
     volumes:
       - redis_data:/data
     networks:
       - ecommerce-network
 
-  # 后端服务
   backend:
     build:
       context: ./backend
@@ -41,16 +17,53 @@ services:
     ports:
       - "8080:8080"
     environment:
-      SPRING_DATASOURCE_URL: jdbc:mysql://mysql:3306/ecommerce_analysis?useUnicode=true&characterEncoding=utf-8&serverTimezone=Asia/Shanghai
-      SPRING_DATASOURCE_PASSWORD: root123
+      SPRING_DATASOURCE_URL: jdbc:mysql://${MYSQL_HOST:-host.docker.internal}:${MYSQL_PORT:-3306}/${MYSQL_DATABASE:-ecommerce_analysis}?useUnicode=true&characterEncoding=utf-8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true&rewriteBatchedStatements=true
+      SPRING_DATASOURCE_USERNAME: ${MYSQL_USERNAME:-root}
+      SPRING_DATASOURCE_PASSWORD: ${MYSQL_PASSWORD:-}
       SPRING_DATA_REDIS_HOST: redis
+      PUBLIC_TASK_PYTHON: ${PUBLIC_TASK_PYTHON:-python3}
+      PUBLIC_TASK_BROWSER_PATH: ${PUBLIC_TASK_BROWSER_PATH:-}
+      PUBLIC_TASK_BROWSER_CHANNEL: ${PUBLIC_TASK_BROWSER_CHANNEL:-chrome}
+      PUBLIC_TASK_BROWSER_PROFILE_DIR: ${PUBLIC_TASK_BROWSER_PROFILE_DIR:-/workspace/runtime/browser-profile}
+      PUBLIC_TASK_WORKER_URL: ${PUBLIC_TASK_WORKER_URL:-http://public-task-worker:8090}
+      PUBLIC_TASK_WORKSPACE_ROOT: ${PUBLIC_TASK_WORKSPACE_ROOT:-/workspace}
+      PUBLIC_TASK_CDP_URL: ${PUBLIC_TASK_CDP_URL:-http://host.docker.internal:9222}
     depends_on:
-      - mysql
       - redis
+      - public-task-worker
+    volumes:
+      - ./:/workspace
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     networks:
       - ecommerce-network
 
-  # 前端服务
+  public-task-worker:
+    build:
+      context: .
+      dockerfile: worker/Dockerfile
+    container_name: ecommerce-public-task-worker
+    restart: always
+    working_dir: /workspace
+    environment:
+      PUBLIC_TASK_PYTHON: ${PUBLIC_TASK_PYTHON:-python3}
+      PUBLIC_TASK_BROWSER_PATH: ${PUBLIC_TASK_BROWSER_PATH:-/usr/bin/chromium}
+      PUBLIC_TASK_BROWSER_CHANNEL: ${PUBLIC_TASK_BROWSER_CHANNEL:-chrome}
+      PUBLIC_TASK_BROWSER_PROFILE_DIR: ${PUBLIC_TASK_BROWSER_PROFILE_DIR:-/workspace/runtime/browser-profile}
+      PUBLIC_TASK_WORKSPACE_ROOT: ${PUBLIC_TASK_WORKSPACE_ROOT:-/workspace}
+      PUBLIC_TASK_CDP_URL: ${PUBLIC_TASK_CDP_URL:-http://host.docker.internal:9222}
+    ports:
+      - "8090:8090"
+    volumes:
+      - ./crawler:/workspace/crawler
+      - ./frontend/scripts:/workspace/frontend/scripts
+      - ./runtime/browser-profile:/workspace/runtime/browser-profile
+      - ./runtime/uploads:/workspace/runtime/uploads
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - ecommerce-network
+
   frontend:
     build:
       context: ./frontend
@@ -65,7 +78,6 @@ services:
       - ecommerce-network
 
 volumes:
-  mysql_data:
   redis_data:
 
 networks:

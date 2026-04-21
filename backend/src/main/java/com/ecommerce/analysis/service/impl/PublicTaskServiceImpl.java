@@ -2,7 +2,9 @@ package com.ecommerce.analysis.service.impl;
 
 import com.ecommerce.analysis.service.ProductPublicMetricService;
 import com.ecommerce.analysis.service.PublicTaskService;
+import com.ecommerce.analysis.service.RFMService;
 import com.ecommerce.analysis.vo.PublicTaskStatusVO;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.task.TaskExecutor;
@@ -11,7 +13,12 @@ import org.springframework.stereotype.Service;
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.InputStreamReader;
+import java.io.OutputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -32,17 +39,32 @@ public class PublicTaskServiceImpl implements PublicTaskService {
 
     private static final long PYTHON_SCRIPT_TIMEOUT_SECONDS = 600;
     private static final long NODE_SCRIPT_TIMEOUT_SECONDS = 1200;
+    private static final List<String> PYTHON_COMMAND_CANDIDATES = Arrays.asList("python3", "python", "python.exe");
+    private static final String PUBLIC_TASK_PYTHON_ENV = "PUBLIC_TASK_PYTHON";
+    private static final String PUBLIC_TASK_CDP_URL_ENV = "PUBLIC_TASK_CDP_URL";
+    private static final String PUBLIC_TASK_WORKER_URL_ENV = "PUBLIC_TASK_WORKER_URL";
+    private static final String PUBLIC_TASK_WORKSPACE_ROOT_ENV = "PUBLIC_TASK_WORKSPACE_ROOT";
+    private static final String PUBLIC_TASK_BROWSER_PATH_ENV = "PUBLIC_TASK_BROWSER_PATH";
+    private static final String DEFAULT_PUBLIC_TASK_CDP_URL = "http://host.docker.internal:9222";
+    private static final List<String> PUBLIC_TASK_ENV_KEYS = Arrays.asList(
+            PUBLIC_TASK_PYTHON_ENV,
+            PUBLIC_TASK_CDP_URL_ENV,
+            PUBLIC_TASK_BROWSER_PATH_ENV,
+            "PUBLIC_TASK_BROWSER_CHANNEL",
+            "PUBLIC_TASK_BROWSER_PROFILE_DIR");
+    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+
     @Autowired
     private ProductPublicMetricService productPublicMetricService;
+
+    @Autowired
+    private RFMService rfmService;
 
     @Autowired
     private TaskExecutor taskExecutor;
 
     private final Map<String, PublicTaskStatusVO> tasks = new ConcurrentHashMap<>();
 
-    /**
-     * 启动公网满意度抓取后台任务。
-     */
     @Override
     public String startCrawlTask(String mappingPath, String outputDir, String fixtureDir) {
         String taskId = createTask("crawl", "公网满意度采集任务已启动");
@@ -50,9 +72,13 @@ public class PublicTaskServiceImpl implements PublicTaskService {
         return taskId;
     }
 
-    /**
-     * 启动“附着当前搜索页”的公网指标抓取任务。
-     */
+    @Override
+    public String startAnalyzeTask(int clusterK) {
+        String taskId = createTask("analyze", "数据分析任务已启动");
+        taskExecutor.execute(() -> runAnalyzeTask(taskId, clusterK));
+        return taskId;
+    }
+
     @Override
     public String startAttachedSearchCrawlTask(String candidatePath, String outputPath, String cdpUrl) {
         String taskId = createTask("crawl_attached_search", "附着搜索页公网指标采集任务已启动");
@@ -60,20 +86,14 @@ public class PublicTaskServiceImpl implements PublicTaskService {
         return taskId;
     }
 
-    /**
-     * 启动公网候选召回任务。
-     */
     @Override
     public String startRecallTask(String productPath, String outputPath, String fixtureDir, String sourceDataPath,
-            String generatedProductPath, int topK, int maxProducts) {
+            String generatedProductPath, int topK, int maxProducts, String cdpUrl) {
         String taskId = createTask("recall", "公网映射候选召回任务已启动");
-        taskExecutor.execute(() -> runRecallTask(taskId, productPath, outputPath, fixtureDir, sourceDataPath, generatedProductPath, topK, maxProducts));
+        taskExecutor.execute(() -> runRecallTask(taskId, productPath, outputPath, fixtureDir, sourceDataPath, generatedProductPath, topK, maxProducts, cdpUrl));
         return taskId;
     }
 
-    /**
-     * 启动公网候选评分任务。
-     */
     @Override
     public String startScoreTask(String productPath, String candidatePath, String outputPath) {
         String taskId = createTask("score", "公网映射评分任务已启动");
@@ -81,9 +101,6 @@ public class PublicTaskServiceImpl implements PublicTaskService {
         return taskId;
     }
 
-    /**
-     * 查询任务状态；若任务不存在则返回一个“missing”占位对象，而不是抛异常。
-     */
     @Override
     public PublicTaskStatusVO getTaskStatus(String taskId) {
         PublicTaskStatusVO status = tasks.get(taskId);
@@ -100,16 +117,12 @@ public class PublicTaskServiceImpl implements PublicTaskService {
         return status;
     }
 
-    /**
-     * 通过写取消信号文件请求后台脚本自行终止。
-     */
     @Override
     public boolean cancelTask(String taskId) {
         PublicTaskStatusVO status = tasks.get(taskId);
         if (status == null || !status.isRunning()) {
             return false;
         }
-        // 写入取消信号文件，Python 脚本会在下一个循环检测并退出
         try {
             String workDir = resolveWorkDir();
             Path signalPath = Paths.get(workDir, "crawler", "output", ".cancel_signal");
@@ -124,9 +137,6 @@ public class PublicTaskServiceImpl implements PublicTaskService {
         }
     }
 
-    /**
-     * 创建一条新的任务状态记录并放入内存任务表。
-     */
     private String createTask(String taskType, String message) {
         String taskId = UUID.randomUUID().toString().replace("-", "");
         PublicTaskStatusVO status = new PublicTaskStatusVO();
@@ -141,9 +151,6 @@ public class PublicTaskServiceImpl implements PublicTaskService {
         return taskId;
     }
 
-    /**
-     * 执行公网满意度抓取任务，并在脚本成功后把结果回写到数据库。
-     */
     private void runCrawlTask(String taskId, String mappingPath, String outputDir, String fixtureDir) {
         PublicTaskStatusVO status = tasks.get(taskId);
         try {
@@ -205,11 +212,12 @@ public class PublicTaskServiceImpl implements PublicTaskService {
      * 执行公网候选召回任务；当传入原始行为文件时会先生成内部商品快照。
      */
     private void runRecallTask(String taskId, String productPath, String outputPath, String fixtureDir, String sourceDataPath,
-            String generatedProductPath, int topK, int maxProducts) {
+            String generatedProductPath, int topK, int maxProducts, String cdpUrl) {
         PublicTaskStatusVO status = tasks.get(taskId);
         try {
             String workDir = resolveWorkDir();
-            String scriptPath = workDir + "/crawler/mapping_candidate_recall.py";
+            String frontendDir = workDir + "/frontend";
+            String nodeScriptPath = frontendDir + "/scripts/jd-search-browser-recall.mjs";
             String snapshotScriptPath = workDir + "/crawler/build_internal_products_snapshot.py";
             String effectiveProductPath = resolveWorkspacePath(productPath);
             String resolvedOutputPath = resolveWorkspacePath(outputPath);
@@ -235,15 +243,30 @@ public class PublicTaskServiceImpl implements PublicTaskService {
 
             updateProgress(status, 60D, "开始召回公网候选商品");
             List<String> args = new ArrayList<>(Arrays.asList(
-                    "--products", effectiveProductPath,
-                    "--output", resolvedOutputPath,
+                    "--products", toWorkspaceRelative(workDir, effectiveProductPath),
+                    "--output", toWorkspaceRelative(workDir, resolvedOutputPath),
                     "--top-k", String.valueOf(topK),
                     "--max-products", String.valueOf(maxProducts)));
+
+            // CDP 地址优先级：前端传入 > 环境变量 PUBLIC_TASK_CDP_URL
+            String effectiveCdpUrl = defaultIfBlank(cdpUrl, resolveDefaultCdpUrl());
+            if (effectiveCdpUrl != null && !effectiveCdpUrl.trim().isEmpty()) {
+                // 补全协议头
+                String normalizedCdpUrl = effectiveCdpUrl.trim();
+                if (!normalizedCdpUrl.startsWith("http://") && !normalizedCdpUrl.startsWith("https://")) {
+                    normalizedCdpUrl = "http://" + normalizedCdpUrl;
+                }
+                args.add("--cdp-url");
+                args.add(normalizedCdpUrl);
+            } else {
+                args.add("--headless");
+                args.add("true");
+            }
             if (resolvedFixtureDir != null && !resolvedFixtureDir.trim().isEmpty()) {
                 args.add("--fixture-dir");
-                args.add(resolvedFixtureDir);
+                args.add(toWorkspaceRelative(workDir, resolvedFixtureDir));
             }
-            ScriptExecution scriptExecution = runPythonScript(workDir, scriptPath, args.toArray(new String[0]));
+            ScriptExecution scriptExecution = runNodeScript(frontendDir, nodeScriptPath, args.toArray(new String[0]));
             status.setLog(mergeLogs(status.getLog(), scriptExecution.output));
             if (scriptExecution.exitCode != 0) {
                 failTask(status, "候选召回失败: " + scriptExecution.output);
@@ -265,7 +288,7 @@ public class PublicTaskServiceImpl implements PublicTaskService {
             result.put("topK", topK);
             result.put("maxProducts", maxProducts);
             result.put("candidateRows", candidateRows);
-            result.put("recallMode", "jd_search");
+            result.put("recallMode", "jd_browser_search");
             completeTask(status, "公网映射候选召回完成", result);
         } catch (Throwable e) {
             log.error("公网映射候选召回任务异常", e);
@@ -332,7 +355,7 @@ public class PublicTaskServiceImpl implements PublicTaskService {
                     "--candidates", toWorkspaceRelative(workDir, resolvedCandidatePath),
                     "--output", toWorkspaceRelative(workDir, resolvedOutputPath),
                     "--max-products", "1",
-                    "--cdp-url", defaultIfBlank(cdpUrl, "http://127.0.0.1:9222"),
+                    "--cdp-url", defaultIfBlank(cdpUrl, resolveDefaultCdpUrl()),
                     "--use-current-page", "true");
             status.setLog(scriptExecution.output);
             if (scriptExecution.exitCode != 0) {
@@ -367,6 +390,24 @@ public class PublicTaskServiceImpl implements PublicTaskService {
     /**
      * 更新任务进度与提示文案。
      */
+    private void runAnalyzeTask(String taskId, int clusterK) {
+        PublicTaskStatusVO status = tasks.get(taskId);
+        try {
+            updateProgress(status, 15D, "姝ｅ湪璁＄畻鐢ㄦ埛 RFM 鎸囨爣");
+            rfmService.calculateAllUserRFM();
+
+            updateProgress(status, 70D, "姝ｅ湪鎵ц K-Means 鑱氱被鍒嗘瀽");
+            rfmService.performKMeansClustering(clusterK);
+
+            Map<String, Object> result = new HashMap<>();
+            result.put("clusterK", clusterK);
+            completeTask(status, "鏁版嵁鍒嗘瀽瀹屾垚", result);
+        } catch (Throwable e) {
+            log.error("鏁版嵁鍒嗘瀽浠诲姟寮傚父", e);
+            failTask(status, "鏁版嵁鍒嗘瀽澶辫触: " + e.getMessage());
+        }
+    }
+
     private void updateProgress(PublicTaskStatusVO status, double progress, String message) {
         status.setProgress(progress);
         status.setMessage(message);
@@ -399,6 +440,10 @@ public class PublicTaskServiceImpl implements PublicTaskService {
      * 解析工作区根目录，兼容从 backend 子目录启动服务。
      */
     private String resolveWorkDir() {
+        String configured = System.getenv(PUBLIC_TASK_WORKSPACE_ROOT_ENV);
+        if (configured != null && !configured.trim().isEmpty()) {
+            return new File(configured.trim()).getAbsolutePath();
+        }
         String workDir = System.getProperty("user.dir");
         if (workDir.endsWith("backend")) {
             workDir = workDir.substring(0, workDir.length() - 8);
@@ -424,7 +469,23 @@ public class PublicTaskServiceImpl implements PublicTaskService {
      * 返回执行 Python 脚本所使用的解释器路径。
      */
     private String resolvePythonCommand() {
-        return "C:\\Users\\86186\\anaconda3\\python.exe";
+        String configured = System.getenv(PUBLIC_TASK_PYTHON_ENV);
+        if (configured != null && !configured.trim().isEmpty()) {
+            if (!isCommandAvailable(configured.trim(), "--version")) {
+                throw new IllegalStateException(
+                        "Configured Python interpreter is not available: " + configured.trim()
+                                + ". Please check environment variable " + PUBLIC_TASK_PYTHON_ENV + ".");
+            }
+            return configured.trim();
+        }
+        for (String candidate : PYTHON_COMMAND_CANDIDATES) {
+            if (isCommandAvailable(candidate, "--version")) {
+                return candidate;
+            }
+        }
+        throw new IllegalStateException(
+                "No Python interpreter found. Please set environment variable " + PUBLIC_TASK_PYTHON_ENV
+                        + " or install python3/python in the current runtime.");
     }
 
     /**
@@ -437,48 +498,57 @@ public class PublicTaskServiceImpl implements PublicTaskService {
         return value;
     }
 
+    private String resolveDefaultCdpUrl() {
+        String configured = System.getenv(PUBLIC_TASK_CDP_URL_ENV);
+        if (configured != null && !configured.trim().isEmpty()) {
+            return configured.trim();
+        }
+        return DEFAULT_PUBLIC_TASK_CDP_URL;
+    }
+
     /**
      * 执行 Python 脚本并收集标准输出。
      */
     private ScriptExecution runPythonScript(String workDir, String scriptPath, String... args)
             throws IOException, InterruptedException {
         List<String> command = new ArrayList<>();
-        command.add(resolvePythonCommand());
+        command.add(resolvePythonCommand(resolvePublicTaskWorkerUrl() != null));
         command.add(scriptPath);
         command.addAll(Arrays.asList(args));
-
-        ProcessBuilder pb = new ProcessBuilder(command);
-        pb.directory(new File(workDir));
-        pb.redirectErrorStream(true);
-
-        Process process = pb.start();
-        StringBuilder output = new StringBuilder();
-        try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
-            String line;
-            while ((line = reader.readLine()) != null) {
-                output.append(line).append("\n");
-            }
-        }
-
-        boolean finished = process.waitFor(PYTHON_SCRIPT_TIMEOUT_SECONDS, TimeUnit.SECONDS);
-        int exitCode = finished ? process.exitValue() : -1;
-        if (!finished) {
-            process.destroyForcibly();
-        }
-        return new ScriptExecution(exitCode, finished, output.toString());
+        return runCommand(workDir, command, PYTHON_SCRIPT_TIMEOUT_SECONDS);
     }
 
     /**
      * 返回可用的 Node 命令名。
      */
-    private String resolveNodeCommand() {
+    private String resolveNodeCommand(boolean preferWorkerRuntime) {
+        if (preferWorkerRuntime) {
+            return "node";
+        }
         String nodeCmd = "node";
-        try {
-            new ProcessBuilder(nodeCmd, "--version").start().waitFor();
-        } catch (Exception e) {
+        if (!isCommandAvailable(nodeCmd, "--version")) {
             nodeCmd = "node.exe";
         }
         return nodeCmd;
+    }
+
+    private boolean isCommandAvailable(String command, String... args) {
+        List<String> checkCommand = new ArrayList<>();
+        checkCommand.add(command);
+        checkCommand.addAll(Arrays.asList(args));
+        try {
+            Process process = new ProcessBuilder(checkCommand)
+                    .redirectErrorStream(true)
+                    .start();
+            boolean finished = process.waitFor(10, TimeUnit.SECONDS);
+            if (!finished) {
+                process.destroyForcibly();
+                return false;
+            }
+            return process.exitValue() == 0;
+        } catch (Exception e) {
+            return false;
+        }
     }
 
     /**
@@ -487,10 +557,31 @@ public class PublicTaskServiceImpl implements PublicTaskService {
     private ScriptExecution runNodeScript(String workDir, String scriptPath, String... args)
             throws IOException, InterruptedException {
         List<String> command = new ArrayList<>();
-        command.add(resolveNodeCommand());
+        command.add(resolveNodeCommand(resolvePublicTaskWorkerUrl() != null));
         command.add(scriptPath);
         command.addAll(Arrays.asList(args));
 
+        return runCommand(workDir, command, NODE_SCRIPT_TIMEOUT_SECONDS);
+    }
+
+    private String resolvePythonCommand(boolean preferWorkerRuntime) {
+        if (preferWorkerRuntime) {
+            String configured = System.getenv(PUBLIC_TASK_PYTHON_ENV);
+            if (configured != null && !configured.trim().isEmpty()) {
+                return configured.trim();
+            }
+            return PYTHON_COMMAND_CANDIDATES.get(0);
+        }
+        return resolvePythonCommand();
+    }
+
+    private ScriptExecution runCommand(String workDir, List<String> command, long timeoutSeconds)
+            throws IOException, InterruptedException {
+        String workerUrl = resolvePublicTaskWorkerUrl();
+        if (workerUrl != null) {
+            assertWorkerHealthy(workerUrl);
+            return runCommandViaWorker(workerUrl, workDir, command, timeoutSeconds);
+        }
         ProcessBuilder pb = new ProcessBuilder(command);
         pb.directory(new File(workDir));
         pb.redirectErrorStream(true);
@@ -504,12 +595,126 @@ public class PublicTaskServiceImpl implements PublicTaskService {
             }
         }
 
-        boolean finished = process.waitFor(NODE_SCRIPT_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+        boolean finished = process.waitFor(timeoutSeconds, TimeUnit.SECONDS);
         int exitCode = finished ? process.exitValue() : -1;
         if (!finished) {
             process.destroyForcibly();
         }
         return new ScriptExecution(exitCode, finished, output.toString());
+    }
+
+    private String resolvePublicTaskWorkerUrl() {
+        String configured = System.getenv(PUBLIC_TASK_WORKER_URL_ENV);
+        if (configured == null || configured.trim().isEmpty()) {
+            return null;
+        }
+        return configured.trim().replaceAll("/+$", "");
+    }
+
+    private void assertWorkerHealthy(String workerUrl) throws IOException {
+        HttpURLConnection connection = null;
+        try {
+            URL url = new URL(workerUrl + "/health");
+            connection = (HttpURLConnection) url.openConnection();
+            connection.setRequestMethod("GET");
+            connection.setConnectTimeout(5000);
+            connection.setReadTimeout(5000);
+            int statusCode = connection.getResponseCode();
+            InputStream responseStream = statusCode >= 400 ? connection.getErrorStream() : connection.getInputStream();
+            String responseBody = readStreamAsString(responseStream);
+            if (statusCode >= 400) {
+                throw new IOException(
+                        "Public task worker is unavailable. Health check returned HTTP " + statusCode + ": " + responseBody);
+            }
+        } catch (IOException e) {
+            throw new IOException(
+                    "Failed to reach public task worker at " + workerUrl
+                            + ". Please confirm docker-compose has started service public-task-worker and "
+                            + PUBLIC_TASK_WORKER_URL_ENV + " is correct.",
+                    e);
+        } finally {
+            if (connection != null) {
+                connection.disconnect();
+            }
+        }
+    }
+
+    private ScriptExecution runCommandViaWorker(String workerUrl, String workDir, List<String> command, long timeoutSeconds)
+            throws IOException {
+        HttpURLConnection connection = null;
+        try {
+            URL url = new URL(workerUrl + "/execute");
+            connection = (HttpURLConnection) url.openConnection();
+            connection.setRequestMethod("POST");
+            connection.setDoOutput(true);
+            connection.setConnectTimeout(10000);
+            connection.setReadTimeout((int) Math.min(Integer.MAX_VALUE, Math.max(15000L, timeoutSeconds * 1000L + 15000L)));
+            connection.setRequestProperty("Content-Type", "application/json; charset=UTF-8");
+
+            Map<String, Object> payload = new HashMap<>();
+            payload.put("command", command);
+            payload.put("workDir", workDir);
+            payload.put("timeoutSeconds", timeoutSeconds);
+            payload.put("env", collectPublicTaskEnv());
+
+            try (OutputStream outputStream = connection.getOutputStream()) {
+                outputStream.write(OBJECT_MAPPER.writeValueAsBytes(payload));
+            }
+
+            int statusCode = connection.getResponseCode();
+            InputStream responseStream = statusCode >= 400 ? connection.getErrorStream() : connection.getInputStream();
+            String responseBody = readStreamAsString(responseStream);
+            if (statusCode >= 400) {
+                throw new IOException("Public task worker request failed with HTTP " + statusCode + ": " + responseBody);
+            }
+            WorkerExecutionResponse response = OBJECT_MAPPER.readValue(responseBody, WorkerExecutionResponse.class);
+            if (!response.finished) {
+                return new ScriptExecution(
+                        response.exitCode,
+                        false,
+                        buildTimeoutMessage(command, timeoutSeconds, response.output));
+            }
+            return new ScriptExecution(response.exitCode, response.finished, response.output == null ? "" : response.output);
+        } finally {
+            if (connection != null) {
+                connection.disconnect();
+            }
+        }
+    }
+
+    private Map<String, String> collectPublicTaskEnv() {
+        Map<String, String> env = new HashMap<>();
+        for (String key : PUBLIC_TASK_ENV_KEYS) {
+            String value = System.getenv(key);
+            if (value != null && !value.trim().isEmpty()) {
+                env.put(key, value.trim());
+            }
+        }
+        return env;
+    }
+
+    private String buildTimeoutMessage(List<String> command, long timeoutSeconds, String output) {
+        StringBuilder builder = new StringBuilder();
+        builder.append("Command timed out after ").append(timeoutSeconds).append(" seconds: ")
+                .append(String.join(" ", command));
+        if (output != null && !output.trim().isEmpty()) {
+            builder.append("\n").append(output.trim());
+        }
+        return builder.toString();
+    }
+
+    private String readStreamAsString(InputStream inputStream) throws IOException {
+        if (inputStream == null) {
+            return "";
+        }
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(inputStream, StandardCharsets.UTF_8))) {
+            StringBuilder output = new StringBuilder();
+            String line;
+            while ((line = reader.readLine()) != null) {
+                output.append(line).append("\n");
+            }
+            return output.toString();
+        }
     }
 
     /**
@@ -591,5 +796,11 @@ public class PublicTaskServiceImpl implements PublicTaskService {
             this.finished = finished;
             this.output = output;
         }
+    }
+
+    private static class WorkerExecutionResponse {
+        public int exitCode;
+        public boolean finished;
+        public String output;
     }
 }

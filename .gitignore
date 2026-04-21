@@ -39,6 +39,7 @@ yarn-error.log*
 # Python
 # ===========================
 __pycache__/
+worker/__pycache__/
 *.py[cod]
 *.pyo
 .venv/
@@ -82,6 +83,7 @@ frontend/.jd-edge-profile/
 frontend/.jd-chrome-profile/
 frontend/.jd-edge-debug-profile/
 crawler/.chrome_profile/
+runtime/
 
 # ===========================
 # 爬虫输出 / 临时数据
@@ -95,3 +97,10 @@ crawled_user_behavior.csv
 # Gemini AI 配置
 # ===========================
 .gemini/
+
+# ===========================
+# AI tooling / local scaffolding
+# ===========================
+.claude/
+.omx/
+paper-specify/

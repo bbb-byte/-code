@@ -2,18 +2,19 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright-core";
+import { buildPersistentContextOptions, resolveBrowserConfig } from "./browser-config.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const frontendDir = path.resolve(__dirname, "..");
 const projectRoot = path.resolve(frontendDir, "..");
-const chromePath = "C:/Program Files/Google/Chrome/Application/chrome.exe";
+const browserConfig = resolveBrowserConfig(frontendDir);
 
 function parseArgs(argv) {
   const result = {
     mapping: "",
     outputDir: path.join(projectRoot, "crawler", "output", "browser_metrics"),
-    userDataDir: path.join(frontendDir, ".jd-chrome-profile"),
+    userDataDir: browserConfig.profileDir,
     headless: true,
     maxProducts: 3,
     sleepSeconds: 5,
@@ -197,17 +198,11 @@ async function main() {
   fs.mkdirSync(userDataDir, { recursive: true });
 
   const context = await chromium.launchPersistentContext(userDataDir, {
-    headless: args.headless,
-    executablePath: chromePath,
-    viewport: { width: 1440, height: 960 },
-    locale: "zh-CN",
-    args: [
-      "--disable-blink-features=AutomationControlled",
-      "--disable-infobars",
-      "--no-first-run",
-      "--no-default-browser-check",
-    ],
-    ignoreDefaultArgs: ["--enable-automation"],
+    ...buildPersistentContextOptions({
+      browserPath: browserConfig.browserPath,
+      browserChannel: browserConfig.browserChannel,
+      headless: args.headless,
+    }),
   });
 
   const page = context.pages()[0] ?? await context.newPage();

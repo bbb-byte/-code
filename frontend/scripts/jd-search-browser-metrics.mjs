@@ -2,18 +2,20 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright-core";
+import { buildPersistentContextOptions, connectOverCdpWithFallback, resolveBrowserConfig } from "./browser-config.mjs";
+import { humanizeSearchResultsPage, searchKeywordLikeHuman } from "./jd-search-flow.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const frontendDir = path.resolve(__dirname, "..");
 const projectRoot = path.resolve(frontendDir, "..");
-const chromePath = "C:/Program Files/Google/Chrome/Application/chrome.exe";
+const browserConfig = resolveBrowserConfig(frontendDir);
 
 function parseArgs(argv) {
   const result = {
     candidates: "",
     output: path.join(projectRoot, "crawler", "output", "jd_search_browser_metrics.csv"),
-    userDataDir: path.join(frontendDir, ".jd-chrome-profile"),
+    userDataDir: browserConfig.profileDir,
     debugDir: path.join(projectRoot, "crawler", "output", "debug"),
     cdpUrl: "",
     useCurrentPage: false,
@@ -131,11 +133,10 @@ function writeCsv(filePath, rows) {
 
 async function collectOne(page, row, sleepSeconds) {
   const keyword = row.search_keyword || row.public_title || row.source_product_id;
-  const searchUrl = `https://search.jd.com/Search?keyword=${encodeURIComponent(keyword)}`;
-  await page.goto(searchUrl, { waitUntil: "domcontentloaded", timeout: 60000 });
+  await searchKeywordLikeHuman(page, keyword, console);
   await page.waitForTimeout(Math.max(1000, sleepSeconds * 1000));
-  await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight / 2));
-  await page.waitForTimeout(1500);
+  await humanizeSearchResultsPage(page);
+  await page.waitForTimeout(900);
   const pageHtml = await page.content();
 
   const extracted = await page.evaluate((sourceProductId) => {
@@ -344,26 +345,22 @@ async function main() {
   let context = null;
   let page = null;
   if (args.cdpUrl) {
-    browser = await chromium.connectOverCDP(args.cdpUrl);
+    const cdpConnection = await connectOverCdpWithFallback(chromium, args.cdpUrl, console);
+    browser = cdpConnection.browser;
     const contexts = browser.contexts();
     const pages = contexts.flatMap((ctx) => ctx.pages());
     page = pages.find((p) => (p.url() || "").includes("search.jd.com/Search")) || pages[0];
     if (!page) {
       throw new Error("No browser page found from CDP connection.");
     }
+    console.log(`Connected to CDP via ${cdpConnection.connectedUrl}. Current page: ${page.url()}`);
   } else {
     context = await chromium.launchPersistentContext(userDataDir, {
-      headless: args.headless,
-      executablePath: chromePath,
-      viewport: { width: 1440, height: 960 },
-      locale: "zh-CN",
-      args: [
-        "--disable-blink-features=AutomationControlled",
-        "--disable-infobars",
-        "--no-first-run",
-        "--no-default-browser-check",
-      ],
-      ignoreDefaultArgs: ["--enable-automation"],
+      ...buildPersistentContextOptions({
+        browserPath: browserConfig.browserPath,
+        browserChannel: browserConfig.browserChannel,
+        headless: args.headless,
+      }),
     });
     page = context.pages()[0] ?? await context.newPage();
   }

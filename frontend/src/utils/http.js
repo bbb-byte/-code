@@ -26,6 +26,22 @@ http.interceptors.request.use(
     }
 )
 
+// 将 HTTP 状态码转为用户友好的中文提示
+function friendlyHttpError(status) {
+    const map = {
+        400: '请求参数有误，请检查后重试',
+        401: '登录已过期，请重新登录',
+        403: '您没有权限执行该操作',
+        404: '请求的资源不存在',
+        408: '请求超时，请稍后重试',
+        500: '服务器内部错误，请联系管理员',
+        502: '服务暂时不可用，请稍后重试',
+        503: '服务正在维护中，请稍后重试',
+        504: '服务器响应超时，请稍后重试',
+    }
+    return map[status] || `服务异常（错误码 ${status}），请稍后重试`
+}
+
 // 响应拦截器
 http.interceptors.response.use(
     response => {
@@ -38,15 +54,14 @@ http.interceptors.response.use(
             handleAuthExpired(router)
             return Promise.reject(new Error(res.message))
         } else if (res.code === 403) {
-            ElMessage.error(res.message || '无权限访问')
-            return Promise.reject(new Error(res.message || '无权限访问'))
+            ElMessage.error('您没有权限执行该操作')
+            return Promise.reject(new Error(res.message || '无权限'))
         } else {
-            ElMessage.error(res.message || '请求失败')
+            ElMessage.error(res.message || '操作失败，请稍后重试')
             return Promise.reject(new Error(res.message))
         }
     },
     error => {
-        console.error('请求错误:', error)
         const status = error.response?.status
 
         if (status === 401) {
@@ -54,12 +69,8 @@ http.interceptors.response.use(
             return Promise.reject(error)
         }
 
-        if (status === 403) {
-            ElMessage.error(error.response?.data?.message || '无权限访问')
-            return Promise.reject(error)
-        }
-
-        ElMessage.error(error.message || '网络错误')
+        const msg = friendlyHttpError(status)
+        ElMessage.error(msg)
         return Promise.reject(error)
     }
 )

@@ -2,17 +2,18 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright-core";
+import { buildPersistentContextOptions, resolveBrowserConfig } from "./browser-config.mjs";
+import { humanizeSearchResultsPage, searchKeywordLikeHuman } from "./jd-search-flow.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const frontendDir = path.resolve(__dirname, "..");
 const projectRoot = path.resolve(frontendDir, "..");
-const userDataDir = path.join(frontendDir, ".jd-chrome-profile");
+const browserConfig = resolveBrowserConfig(frontendDir);
+const userDataDir = browserConfig.profileDir;
 const debugDir = path.join(projectRoot, "crawler", "output", "debug");
-const chromePath = "C:/Program Files/Google/Chrome/Application/chrome.exe";
 
 const keyword = process.argv.slice(2).join(" ").trim() || "apple smartphone";
-const targetUrl = `https://search.jd.com/Search?keyword=${encodeURIComponent(keyword)}`;
 const debugHtmlPath = path.join(debugDir, "jd_browser_search_after_login.html");
 const storageStatePath = path.join(debugDir, "jd_browser_storage_state.json");
 
@@ -21,31 +22,33 @@ fs.mkdirSync(debugDir, { recursive: true });
 
 console.log(`Opening Chrome for JD search check: ${keyword}`);
 console.log(`Profile dir: ${userDataDir}`);
+if (browserConfig.browserPath) {
+  console.log(`Browser executable: ${browserConfig.browserPath}`);
+} else if (browserConfig.browserChannel) {
+  console.log(`Browser channel: ${browserConfig.browserChannel}`);
+} else {
+  console.log("Browser executable: auto-detect");
+}
 console.log("If JD asks you to log in, please complete login in the opened browser window.");
 
 const context = await chromium.launchPersistentContext(userDataDir, {
-  executablePath: chromePath,
-  headless: false,
-  locale: "zh-CN",
-  viewport: { width: 1440, height: 960 },
-  args: [
-    "--disable-blink-features=AutomationControlled",
-    "--disable-infobars",
-    "--no-first-run",
-    "--no-default-browser-check",
-  ],
-  ignoreDefaultArgs: ["--enable-automation"],
+  ...buildPersistentContextOptions({
+    browserPath: browserConfig.browserPath,
+    browserChannel: browserConfig.browserChannel,
+    headless: false,
+  }),
 });
 
 try {
   const page = context.pages()[0] ?? await context.newPage();
-  await page.goto(targetUrl, { waitUntil: "domcontentloaded", timeout: 60000 });
+  await searchKeywordLikeHuman(page, keyword, console);
 
   const deadline = Date.now() + 8 * 60 * 1000;
   let result = null;
 
   while (Date.now() < deadline) {
-    await page.waitForTimeout(4000);
+    await humanizeSearchResultsPage(page);
+    await page.waitForTimeout(1800);
     let snapshot;
     try {
       snapshot = await page.evaluate(() => {

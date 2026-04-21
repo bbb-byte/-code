@@ -12,12 +12,12 @@
           <div class="card-title">公网满意度补充</div>
           <div class="crawler-ui">
             <p class="desc">Python 爬虫当前只补充商品侧公开满意度指标，例如好评率、评论总数和店铺评分。它不抓取真实点击日志，也不会进入正式 `user_behavior` 主数据链路。</p>
-            <p class="desc">这一步直接读取“公网映射文件”，也就是已经确认好的 `item_id -> 京东商品页` 关系；它不会直接读取 Kaggle/archive 原始行为文件。</p>
+            <p class="desc">这一步直接读取"公网映射文件"，也就是已经确认好的 `item_id -> 京东商品页` 关系；它不会直接读取 Kaggle/archive 原始行为文件。</p>
             <el-collapse class="flow-collapse">
               <el-collapse-item title="什么时候点这里" name="crawl-guide">
                 <div class="flow-tips">
                   <ol>
-                    <li>1. 先在下方“公网映射工作台”完成候选召回、映射评分和确认入库</li>
+                    <li>1. 先在下方"公网映射工作台"完成候选召回、映射评分和确认入库</li>
                     <li>2. 确认 `product_public_mapping` 表里已经有映射数据</li>
                     <li>3. 再点击这里，按映射文件抓取京东公开评价摘要</li>
                   </ol>
@@ -51,8 +51,25 @@
         <div class="card">
             <div class="card-title">数据导入</div>
           <el-form :model="importForm" label-width="80px" label-position="left">
-            <el-form-item label="文件路径">
-              <el-input v-model="importForm.filePath" placeholder="支持 archive 主数据、legacy 7 列行为样本或带标准表头的行为文件" />
+            <el-form-item label="上传文件">
+              <el-upload
+                ref="importUploadRef"
+                class="w-full"
+                :auto-upload="false"
+                :show-file-list="true"
+                :limit="1"
+                accept=".csv,text/csv"
+                :on-change="handleImportFileChange"
+                :on-remove="handleImportFileRemove"
+              >
+                <el-button type="primary" plain>选择 CSV 文件</el-button>
+                <template #tip>
+                  <div class="el-upload__tip">
+                    示例文件名：<code>2020-Apr.csv</code>、<code>2020-Apr-demo.csv</code><br>
+                    支持 archive 主数据（含表头）、legacy 7 列行为样本，系统自动识别格式并预处理。
+                  </div>
+                </template>
+              </el-upload>
             </el-form-item>
             <div class="import-tips">
               这里只导入用户行为事件数据。公网满意度采集生成的指标文件会自动回写独立表，不需要再走这里的行为导入。
@@ -131,6 +148,15 @@
                 <el-icon><DataAnalysis /></el-icon> 执行分析
               </el-button>
             </el-form-item>
+            <div v-if="currentPublicTask?.taskType === 'analyze'" class="analyze-task-tip">
+              <el-progress
+                :percentage="Math.max(0, Math.min(100, Number(currentPublicTask?.progress || 5)))"
+                :status="currentPublicTask?.running ? '' : (currentPublicTask?.status === 'success' ? 'success' : 'exception')"
+              />
+              <div class="analyze-task-text">
+                {{ currentPublicTask?.message || '分析任务状态同步中...' }}
+              </div>
+            </div>
             <div class="analyze-tips">
               <p class="font-medium">分析流程：</p>
               <ol>
@@ -147,19 +173,23 @@
     <div class="card mapping-workbench">
       <div class="card-title">公网映射工作台</div>
       <p class="mapping-desc">
-        这里用于管理员执行“原始行为文件/商品快照 -> 候选召回 -> 映射评分 -> 人工复核”流程。它只生成待核验文件，不会直接抓取公网满意度指标。
+        这里用于管理员执行"原始行为文件/商品快照 -> 候选召回 -> 映射评分 -> 人工复核"流程。它只生成待核验文件，不会直接抓取公网满意度指标。
       </p>
       <el-collapse class="flow-collapse">
         <el-collapse-item title="从 Kaggle 数据集到补充用户满意度的推荐步骤" name="mapping-guide">
           <div class="flow-tips">
             <ol>
-              <li>1. 在上方“数据导入”里先导入 `archive` / Kaggle 行为数据，完成主分析数据入库</li>
-          <li>2. 在这里填写“原始行为文件”路径，例如 `archive/2020-Apr-demo.csv`；如果你已经有商品快照，也可以直接填写“商品快照”路径</li>
-              <li>3. 点击“召回候选商品”，系统会先自动生成商品快照，再输出候选商品文件</li>
-              <li>4. 点击“计算映射分数”，生成评分结果预览</li>
-              <li>5. 在评分预览里检查候选商品，必要时点“编辑”修改标题、置信度、核验说明和证据备注</li>
-              <li>6. 勾选通过的候选，点击“一键确认入库”，把结果写入 `product_public_mapping`</li>
-              <li>7. 最后回到上方“公网满意度补充”，点击“采集公网满意度指标”，按已确认映射抓取京东公开评价摘要</li>
+              <li>1. 在上方"数据导入"里先导入 `archive` / Kaggle 行为数据，完成主分析数据入库</li>
+              <li>2. 在这里上传"原始行为文件"，例如 Kaggle/archive 原始行为 CSV；如果你已经有商品快照，也可以直接上传"商品快照"文件</li>
+              <li>3. 在宿主机用以下命令打开带远程调试端口的 Chrome，并手动登录京东：<br>
+                <code>chrome.exe --remote-debugging-address=0.0.0.0 --remote-debugging-port=9222 --user-data-dir=C:\chrome-jd-profile</code><br>
+                登录后不要关闭这个 Chrome 窗口，然后在下方"宿主机浏览器地址"填入 <code>http://host.docker.internal:9222</code>
+              </li>
+              <li>4. 点击"召回候选商品"，系统会接管你已登录的 Chrome 进行搜索，再输出候选商品文件</li>
+              <li>5. 点击"计算映射分数"，生成评分结果预览</li>
+              <li>6. 在评分预览里检查候选商品，必要时点"编辑"修改标题、置信度、核验说明和证据备注</li>
+              <li>7. 勾选通过的候选，点击"一键确认入库"，把结果写入 `product_public_mapping`</li>
+              <li>8. 最后回到上方"公网满意度补充"，点击"采集公网满意度指标"，按已确认映射抓取京东公开评价摘要</li>
             </ol>
           </div>
         </el-collapse-item>
@@ -168,36 +198,68 @@
         <el-row :gutter="24">
           <el-col :xs="24" :md="12">
             <el-form-item label="原始行为文件">
-              <el-input v-model="mappingForm.sourceDataPath" placeholder="可选，Kaggle/archive 原始行为 CSV；填写后会先自动生成商品快照" />
+              <el-upload
+                class="w-full"
+                :auto-upload="false"
+                :show-file-list="true"
+                :limit="1"
+                accept=".csv,text/csv"
+                :on-change="(f) => handleMappingFileChange('source', f)"
+                :on-remove="() => handleMappingFileRemove('source')"
+              >
+                <el-button plain size="small">选择 CSV 文件</el-button>
+                <template #tip>
+                  <div class="el-upload__tip">
+                    示例文件名：<code>2020-Apr.csv</code>、<code>2020-Apr-demo.csv</code><br>
+                    上传后系统会自动从中提取商品列表，生成商品快照，再输出候选文件。
+                  </div>
+                </template>
+              </el-upload>
             </el-form-item>
           </el-col>
           <el-col :xs="24" :md="12">
             <el-form-item label="商品快照">
-              <el-input v-model="mappingForm.productPath" placeholder="内部商品快照 CSV 路径；若已提供原始行为文件，此项可作为回退值" />
+              <el-upload
+                class="w-full"
+                :auto-upload="false"
+                :show-file-list="true"
+                :limit="1"
+                accept=".csv,text/csv"
+                :on-change="(f) => handleMappingFileChange('product', f)"
+                :on-remove="() => handleMappingFileRemove('product')"
+              >
+                <el-button plain size="small">选择 CSV 文件</el-button>
+                <template #tip>
+                  <div class="el-upload__tip">
+                    示例文件名：<code>internal_products.auto.csv</code><br>
+                    需包含 <code>item_id</code>、<code>category_id</code>、<code>price</code> 列；若同时上传了原始行为文件，此项可留空。
+                  </div>
+                </template>
+              </el-upload>
             </el-form-item>
           </el-col>
         </el-row>
         <el-row :gutter="24">
           <el-col :xs="24" :md="12">
             <el-form-item label="自动快照输出">
-              <el-input v-model="mappingForm.generatedProductPath" placeholder="自动生成的商品快照输出路径" />
+              <el-input v-model="mappingForm.generatedProductPath" placeholder="例：crawler/output/internal_products.auto.csv" />
             </el-form-item>
           </el-col>
           <el-col :xs="24" :md="12">
             <el-form-item label="夹具目录">
-              <el-input v-model="mappingForm.fixtureDir" placeholder="可选，仅在你准备了 jd_search_商品ID.html 这类离线夹具时填写" />
+              <el-input v-model="mappingForm.fixtureDir" placeholder="可选，例：crawler/fixtures/jd_search_html" />
             </el-form-item>
           </el-col>
         </el-row>
         <el-row :gutter="24">
           <el-col :xs="24" :md="8">
             <el-form-item label="候选文件">
-              <el-input v-model="mappingForm.candidateOutputPath" placeholder="候选召回输出 CSV" />
+              <el-input v-model="mappingForm.candidateOutputPath" placeholder="例：crawler/output/recalled_candidates.browser.csv" />
             </el-form-item>
           </el-col>
           <el-col :xs="24" :md="8">
             <el-form-item label="评分文件">
-              <el-input v-model="mappingForm.scoreOutputPath" placeholder="评分结果输出 CSV" />
+              <el-input v-model="mappingForm.scoreOutputPath" placeholder="例：crawler/output/recalled_candidate_scores.csv" />
             </el-form-item>
           </el-col>
           <el-col :xs="24" :md="8">
@@ -211,11 +273,27 @@
             </el-form-item>
           </el-col>
         </el-row>
+        <el-row :gutter="24" style="margin-top: 4px;">
+          <el-col :xs="24" :md="16">
+            <el-form-item label="宿主机浏览器">
+              <el-input
+                v-model="mappingForm.cdpUrl"
+                placeholder="Docker 容器内推荐填写 http://host.docker.internal:9222"
+                clearable
+              >
+                <template #prepend>CDP 地址</template>
+              </el-input>
+              <div class="el-upload__tip" style="margin-top:4px;">
+                当前召回会优先复用宿主机已登录浏览器，在京东页面搜索框中逐字输入关键词并提交；如果容器提示 192.168.x.x:9222 被拒绝，请用 `--remote-debugging-address=0.0.0.0` 重新启动宿主机 Chrome
+              </div>
+            </el-form-item>
+          </el-col>
+        </el-row>
         <div class="mapping-actions">
           <el-button type="warning" plain @click="handleRecallCandidates" :loading="recallingCandidates">
             <el-icon><Search /></el-icon> 召回候选商品
           </el-button>
-          <el-button type="primary" @click="handleScoreCandidates" :loading="scoringCandidates">
+          <el-button type="primary" plain @click="handleScoreCandidates" :loading="scoringCandidates">
             <el-icon><DataAnalysis /></el-icon> 计算映射分数
           </el-button>
           <el-button @click="loadScorePreview" :loading="loadingScorePreview" plain>
@@ -555,10 +633,11 @@
 <script setup>
 import { computed, nextTick, ref, reactive, onMounted, onUnmounted } from 'vue'
 import {
-  importData,
+  uploadImportFile,
+  uploadMappingFile,
   getImportProgress,
   stopImport,
-  analyzeData,
+  startAnalyzeTask,
   crawlData,
   crawlAttachedSearchData,
   getLatestBehaviors,
@@ -607,24 +686,36 @@ const scoreEditDialogVisible = ref(false)
 const editingScoreRow = ref(null)
 
 const importForm = reactive({
-  filePath: 'archive/2020-Apr-demo.csv',
   batchSize: 5000,
   maxRows: 100000
 })
+const importUploadRef = ref(null)
+const selectedImportFile = ref(null)
+const selectedMappingFiles = reactive({ source: null, product: null })
+
+const handleMappingFileChange = (key, file) => {
+  selectedMappingFiles[key] = file?.raw || null
+}
+const handleMappingFileRemove = (key) => {
+  selectedMappingFiles[key] = null
+}
 
 const analyzeForm = reactive({
   clusterK: 5
 })
 
+const DEFAULT_CDP_URL = 'http://host.docker.internal:9222'
+
 const mappingForm = reactive({
-  sourceDataPath: 'archive/2020-Apr-demo.csv',
-  productPath: 'crawler/output/internal_products.auto.csv',
+  sourceDataPath: '',
+  productPath: '',
   generatedProductPath: 'crawler/output/internal_products.auto.csv',
   fixtureDir: '',
   topK: 5,
   maxProducts: 50,
   candidateOutputPath: 'crawler/output/recalled_candidates.browser.csv',
-  scoreOutputPath: 'crawler/output/recalled_candidate_scores.csv'
+  scoreOutputPath: 'crawler/output/recalled_candidate_scores.csv',
+  cdpUrl: DEFAULT_CDP_URL
 })
 
 const scoreEditForm = reactive({
@@ -648,6 +739,7 @@ const logs = ref([
 
 let progressTimer = null
 let publicTaskTimer = null
+const PUBLIC_TASK_STORAGE_KEY = 'data-manage:last-public-task-id'
 
 function createEmptyImportStatus() {
   return {
@@ -674,13 +766,14 @@ function createEmptyImportStatus() {
 const handleCrawl = async () => {
   crawling.value = true
   addLog('开始采集商品公网满意度指标任务...', 'warning')
-  
+
   try {
     const res = await crawlData(
       '',
       'crawler/output',
       ''
     )
+    persistPublicTaskId(res.data.taskId || '')
     lastStartedTaskId.value = res.data.taskId || ''
     currentPublicTask.value = {
       taskId: res.data.taskId,
@@ -719,8 +812,9 @@ const handleAttachedSearchCrawl = async () => {
     const res = await crawlAttachedSearchData(
       mappingForm.candidateOutputPath,
       'crawler/output/jd_search_browser_metrics_attached.csv',
-      'http://127.0.0.1:9222'
+      mappingForm.cdpUrl || DEFAULT_CDP_URL
     )
+    persistPublicTaskId(res.data.taskId || '')
     lastStartedTaskId.value = res.data.taskId || ''
     currentPublicTask.value = {
       taskId: res.data.taskId,
@@ -756,15 +850,36 @@ const handleRecallCandidates = async () => {
   addLog('开始召回公网映射候选商品...', 'warning')
 
   try {
+    // 先上传选中的本地文件，拿到服务器路径
+    let sourceDataPath = mappingForm.sourceDataPath
+    let productPath = mappingForm.productPath
+
+    if (selectedMappingFiles.source) {
+      addLog(`上传原始行为文件: ${selectedMappingFiles.source.name}...`, 'primary')
+      const res = await uploadMappingFile(selectedMappingFiles.source)
+      sourceDataPath = res.data.serverPath
+      mappingForm.sourceDataPath = sourceDataPath
+      addLog(`原始行为文件上传完成`, 'success')
+    }
+    if (selectedMappingFiles.product) {
+      addLog(`上传商品快照文件: ${selectedMappingFiles.product.name}...`, 'primary')
+      const res = await uploadMappingFile(selectedMappingFiles.product)
+      productPath = res.data.serverPath
+      mappingForm.productPath = productPath
+      addLog(`商品快照文件上传完成`, 'success')
+    }
+
     const res = await recallPublicMappingCandidates(
-      mappingForm.productPath,
+      productPath,
       mappingForm.candidateOutputPath,
       mappingForm.fixtureDir,
-      mappingForm.sourceDataPath,
+      sourceDataPath,
       mappingForm.generatedProductPath,
       mappingForm.topK,
-      mappingForm.maxProducts
+      mappingForm.maxProducts,
+      mappingForm.cdpUrl
     )
+    persistPublicTaskId(res.data.taskId || '')
     lastStartedTaskId.value = res.data.taskId || ''
     currentPublicTask.value = {
       taskId: res.data.taskId,
@@ -818,6 +933,7 @@ const handleScoreCandidates = async () => {
       mappingForm.candidateOutputPath,
       mappingForm.scoreOutputPath
     )
+    persistPublicTaskId(res.data.taskId || '')
     lastStartedTaskId.value = res.data.taskId || ''
     currentPublicTask.value = {
       taskId: res.data.taskId,
@@ -856,6 +972,14 @@ const clearPublicTaskTimer = () => {
   }
 }
 
+const persistPublicTaskId = (taskId) => {
+  if (!taskId) {
+    localStorage.removeItem(PUBLIC_TASK_STORAGE_KEY)
+    return
+  }
+  localStorage.setItem(PUBLIC_TASK_STORAGE_KEY, taskId)
+}
+
 const handleCancelTask = async () => {
   const taskId = currentPublicTask.value?.taskId || lastStartedTaskId.value
   if (!taskId) return
@@ -880,6 +1004,10 @@ const pollPublicTask = (taskId, handlers = {}) => {
       const res = await getPublicTaskProgress(taskId)
       const task = res.data
       currentPublicTask.value = task
+      persistPublicTaskId(task?.taskId || '')
+      if (task?.taskType === 'analyze') {
+        analyzing.value = !!task?.running
+      }
       if (task?.running) {
         return
       }
@@ -1056,61 +1184,73 @@ const actionLabel = (action) => {
   return '建议拒绝'
 }
 
+const handleImportFileChange = (file) => {
+  selectedImportFile.value = file?.raw || null
+}
+
+const handleImportFileRemove = () => {
+  selectedImportFile.value = null
+}
+
+const beginImportProgressPolling = () => {
+  progressTimer = setInterval(async () => {
+    try {
+      const res = await getImportProgress()
+      importStatus.value = {
+        ...createEmptyImportStatus(),
+        ...res.data
+      }
+      importProgress.value = Math.min(importStatus.value.progress || 0, 100)
+
+      if (!importStatus.value.importing) {
+        clearInterval(progressTimer)
+        progressTimer = null
+        importing.value = false
+        if (!importStatus.value.totalRows) {
+          importProgress.value = importStatus.value.insertedRows > 0 ? 100 : 0
+        }
+        addLog(
+          `导入结束：成功 ${formatCount(importStatus.value.insertedRows)} 条，跳过 ${formatCount(importStatus.value.skippedRows)} 条，解析失败 ${formatCount(importStatus.value.parseErrorRows)} 条，自动预处理 ${formatCount(importStatus.value.preprocessedRows)} 条。`,
+          isImportOutcomeError(importStatus.value) ? 'danger' : (importStatus.value.insertedRows > 0 ? 'success' : 'warning')
+        )
+        if (isImportOutcomeError(importStatus.value)) {
+          ElMessage.error(importStatus.value.message || '数据导入失败')
+        } else if (importStatus.value.insertedRows > 0) {
+          ElMessage.success(importStatus.value.message || '数据导入完成')
+        } else {
+          ElMessage.warning(importStatus.value.message || '数据导入结束')
+        }
+        loadOverview()
+        loadLatestBehaviors()
+      }
+    } catch (e) {
+      console.error(e)
+    }
+  }, 2000)
+}
+
 const handleImport = async () => {
-  if (!importForm.filePath) {
-    ElMessage.warning('请输入数据文件路径')
+  const hasUploadFile = !!selectedImportFile.value
+  if (!hasUploadFile) {
+    ElMessage.warning('请先选择要上传的 CSV 文件')
     return
   }
-  
+
   if (progressTimer) clearInterval(progressTimer)
   importing.value = true
   importProgress.value = 0
   importStatus.value = {
     ...createEmptyImportStatus(),
     importing: true,
-    filePath: importForm.filePath,
+    filePath: selectedImportFile.value?.name || '',
     message: '导入任务已启动'
   }
-  addLog(`开始从路径读取数据: ${importForm.filePath}（自动预处理已启用）`, 'primary')
-  
+  addLog(`开始上传并导入文件: ${selectedImportFile.value?.name || 'CSV'}（自动预处理已启用）`, 'primary')
+
   try {
-    await importData(importForm.filePath, importForm.batchSize, importForm.maxRows)
+    await uploadImportFile(selectedImportFile.value, importForm.batchSize, importForm.maxRows)
     ElMessage.success('导入任务已启动')
-    
-    progressTimer = setInterval(async () => {
-      try {
-        const res = await getImportProgress()
-        importStatus.value = {
-          ...createEmptyImportStatus(),
-          ...res.data
-        }
-        importProgress.value = Math.min(importStatus.value.progress || 0, 100)
-        
-        if (!importStatus.value.importing) {
-          clearInterval(progressTimer)
-          progressTimer = null
-          importing.value = false
-          if (!importStatus.value.totalRows) {
-            importProgress.value = importStatus.value.insertedRows > 0 ? 100 : 0
-          }
-          addLog(
-            `导入结束：成功 ${formatCount(importStatus.value.insertedRows)} 条，跳过 ${formatCount(importStatus.value.skippedRows)} 条，解析失败 ${formatCount(importStatus.value.parseErrorRows)} 条，自动预处理 ${formatCount(importStatus.value.preprocessedRows)} 条。`,
-            isImportOutcomeError(importStatus.value) ? 'danger' : (importStatus.value.insertedRows > 0 ? 'success' : 'warning')
-          )
-          if (isImportOutcomeError(importStatus.value)) {
-            ElMessage.error(importStatus.value.message || '数据导入失败')
-          } else if (importStatus.value.insertedRows > 0) {
-            ElMessage.success(importStatus.value.message || '数据导入完成')
-          } else {
-            ElMessage.warning(importStatus.value.message || '数据导入结束')
-          }
-          loadOverview() 
-          loadLatestBehaviors() 
-        }
-      } catch (e) {
-        console.error(e)
-      }
-    }, 2000)
+    beginImportProgressPolling()
   } catch (error) {
     importing.value = false
     addLog('❌ 导入失败: ' + (error.response?.data?.message || error.message), 'danger')
@@ -1132,13 +1272,38 @@ const handleAnalyze = async () => {
   addLog('开始执行数据分析...', 'primary')
   
   try {
-    await analyzeData(analyzeForm.clusterK)
-    ElMessage.success('数据分析完成')
-    addLog('数据分析完成', 'success')
+    const res = await startAnalyzeTask(analyzeForm.clusterK)
+    persistPublicTaskId(res.data.taskId || '')
+    lastStartedTaskId.value = res.data.taskId || ''
+    currentPublicTask.value = {
+      taskId: res.data.taskId,
+      taskType: 'analyze',
+      running: true,
+      progress: 1,
+      status: 'running',
+      message: '分析任务已启动'
+    }
+    addLog(`分析任务已启动，任务ID: ${res.data.taskId}`, 'primary')
+    pollPublicTask(res.data.taskId, {
+      onSuccess: async () => {
+        addLog('数据分析完成', 'success')
+        ElMessage.success('数据分析完成')
+        await loadOverview()
+      },
+      onFailed: (task) => {
+        addLog('分析失败: ' + (task.message || '任务执行失败'), 'danger')
+      },
+      onFinally: () => {
+        analyzing.value = false
+      }
+    })
+    return
   } catch (error) {
-    addLog('分析失败: ' + error.message, 'danger')
+    addLog('分析失败: ' + (error.response?.data?.message || error.message), 'danger')
   } finally {
-    analyzing.value = false
+    if (!(currentPublicTask.value?.taskType === 'analyze' && currentPublicTask.value?.running)) {
+      analyzing.value = false
+    }
   }
 }
 
@@ -1186,7 +1351,7 @@ const recallResultDescription = computed(() => {
   if (!recallResult.value) return ''
   const snapshotPath = recallResult.value.generatedProductPath || recallResult.value.productPath || '-'
   const candidatePath = recallResult.value.outputFile || '-'
-  return `商品快照: ${snapshotPath} | 候选文件: ${candidatePath} | 下一步请执行“计算映射分数”`
+  return `商品快照: ${snapshotPath} | 候选文件: ${candidatePath} | 下一步请执行"计算映射分数"`
 })
 
 const isImportOutcomeError = (status) => /失败|不支持|为空/.test(status?.message || '')
@@ -1205,6 +1370,17 @@ onMounted(() => {
   loadOverview()
   loadLatestBehaviors()
   loadLatestPublicMappings()
+  const persistedTaskId = localStorage.getItem(PUBLIC_TASK_STORAGE_KEY) || ''
+  if (persistedTaskId) {
+    lastStartedTaskId.value = persistedTaskId
+    pollPublicTask(persistedTaskId, {
+      onFinally: (task) => {
+        if (task?.taskType === 'analyze') {
+          analyzing.value = false
+        }
+      }
+    })
+  }
 })
 
 onUnmounted(() => {
@@ -1351,6 +1527,17 @@ onUnmounted(() => {
     }
   }
   
+  .analyze-task-tip {
+    margin-bottom: 16px;
+
+    .analyze-task-text {
+      margin-top: 8px;
+      font-size: 13px;
+      color: var(--text-secondary);
+      line-height: 1.6;
+    }
+  }
+
   .analyze-tips {
     margin-top: 20px;
     background: rgba(16, 185, 129, 0.05);

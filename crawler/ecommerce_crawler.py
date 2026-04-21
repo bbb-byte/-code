@@ -2,6 +2,7 @@ import argparse
 import csv
 import json
 import logging
+import os
 import random
 import re
 import time
@@ -23,6 +24,8 @@ DEFAULT_RETRY_BACKOFF_SECONDS = 10.0
 DEFAULT_SLEEP_JITTER = (1.0, 3.0)
 CONSECUTIVE_BLOCK_THRESHOLD = 3
 CONSECUTIVE_BLOCK_PAUSE_SECONDS = 120
+DEFAULT_CDP_PORT = 9222
+DEFAULT_FALLBACK_CDP_PORT = 19222
 
 # 评论区 CSS 选择器 (京东商品页)
 COMMENT_TAB_SELECTOR = "#detail .tab-main-item:nth-child(5)"
@@ -69,6 +72,7 @@ class JDPublicSatisfactionCrawler:
         fixture_dir: Optional[Path] = None,
         headless: bool = False,
         browser_path: str = "",
+        browser_user_data_dir: Optional[Path] = None,
     ):
         self.timeout = timeout
         self.sleep_seconds = sleep_seconds
@@ -79,6 +83,7 @@ class JDPublicSatisfactionCrawler:
         self.headless = headless
         self.browser: Optional[Chromium] = None
         self.browser_path = browser_path
+        self.browser_user_data_dir = browser_user_data_dir
         self._owns_browser = False
 
     # ------------------------------------------------------------------
@@ -94,12 +99,13 @@ class JDPublicSatisfactionCrawler:
         if self.fixture_dir:
             return
 
-        debug_profile_dir = str(Path.home() / "AppData" / "Local" / "Google" / "Chrome" / "Debug Profile")
+        debug_profile_dir = self.browser_user_data_dir or (Path(__file__).resolve().parent / "output" / "browser-profile")
+        debug_profile_dir.mkdir(parents=True, exist_ok=True)
 
         # 第一步：尝试连接已有的调试 Chrome
         try:
             co = ChromiumOptions()
-            co.set_local_port(9222)
+            co.set_local_port(DEFAULT_CDP_PORT)
             self.browser = Chromium(co)
             self._owns_browser = False
             logger.info("✓ 已接管现有 Chrome 浏览器（端口 9222）")
@@ -110,10 +116,10 @@ class JDPublicSatisfactionCrawler:
         # 第二步：自动启动带调试端口的 Chrome
         try:
             co = ChromiumOptions()
-            browser = self.browser_path or r"C:\Program Files\Google\Chrome\Application\chrome.exe"
-            co.set_browser_path(browser)
-            co.set_local_port(9222)
-            co.set_user_data_path(debug_profile_dir)
+            if self.browser_path:
+                co.set_browser_path(self.browser_path)
+            co.set_local_port(DEFAULT_CDP_PORT)
+            co.set_user_data_path(str(debug_profile_dir))
             if self.headless:
                 co.headless()
             self.browser = Chromium(co)
@@ -126,10 +132,10 @@ class JDPublicSatisfactionCrawler:
 
         # 回退：独立 Chrome
         co = ChromiumOptions()
-        browser = self.browser_path or r"C:\Program Files\Google\Chrome\Application\chrome.exe"
-        co.set_browser_path(browser)
-        co.set_local_port(19222)
-        co.set_user_data_path(debug_profile_dir)
+        if self.browser_path:
+            co.set_browser_path(self.browser_path)
+        co.set_local_port(DEFAULT_FALLBACK_CDP_PORT)
+        co.set_user_data_path(str(debug_profile_dir))
         if self.headless:
             co.headless()
         self.browser = Chromium(co)
@@ -666,6 +672,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--retry-backoff-seconds", default=DEFAULT_RETRY_BACKOFF_SECONDS, type=float, help="每次重试前的退避基础秒数")
     parser.add_argument("--headless", action="store_true", help="无头模式运行（不显示浏览器窗口）")
     parser.add_argument("--browser-path", default="", help="浏览器可执行文件路径")
+    parser.add_argument("--browser-user-data-dir", default="", help="Browser user data dir")
     return parser
 
 
@@ -676,6 +683,35 @@ def resolve_path(base_dir: Path, raw_path: str) -> Path:
     if path.exists():
         return path.resolve()
     return (base_dir / path).resolve()
+
+
+def first_non_empty(*values: Optional[str]) -> str:
+    for value in values:
+        if value and str(value).strip():
+            return str(value).strip()
+    return ""
+
+
+def resolve_browser_path(cli_value: str) -> str:
+    return first_non_empty(
+        cli_value,
+        os.getenv("PUBLIC_TASK_BROWSER_PATH"),
+        os.getenv("CHROME_PATH"),
+        os.getenv("CHROMIUM_PATH"),
+    )
+
+
+def resolve_browser_user_data_dir(base_dir: Path, cli_value: str) -> Path:
+    configured = first_non_empty(
+        cli_value,
+        os.getenv("PUBLIC_TASK_BROWSER_PROFILE_DIR"),
+    )
+    if configured:
+        configured_path = Path(configured)
+        if configured_path.is_absolute():
+            return configured_path
+        return (base_dir / configured_path).resolve()
+    return (base_dir / "output" / "browser-profile").resolve()
 
 
 def main() -> None:
@@ -690,6 +726,8 @@ def main() -> None:
     output_dir = resolve_path(base_dir, args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     fixture_dir = resolve_path(base_dir, args.fixture_dir) if args.fixture_dir else None
+    browser_path = resolve_browser_path(args.browser_path)
+    browser_user_data_dir = resolve_browser_user_data_dir(base_dir, args.browser_user_data_dir)
 
     crawler = JDPublicSatisfactionCrawler(
         timeout=args.timeout,
@@ -698,7 +736,8 @@ def main() -> None:
         retry_backoff_seconds=args.retry_backoff_seconds,
         fixture_dir=fixture_dir,
         headless=args.headless,
-        browser_path=args.browser_path,
+        browser_path=browser_path,
+        browser_user_data_dir=browser_user_data_dir,
     )
     rows = crawler.crawl(mapping_path)
 
