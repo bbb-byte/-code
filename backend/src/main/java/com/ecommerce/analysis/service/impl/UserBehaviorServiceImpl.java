@@ -10,6 +10,7 @@ import com.ecommerce.analysis.service.UserBehaviorService;
 import com.ecommerce.analysis.vo.DashboardVO;
 import com.ecommerce.analysis.vo.HotProductsPublicMetricsPageVO;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.util.HashMap;
@@ -25,9 +26,6 @@ public class UserBehaviorServiceImpl extends ServiceImpl<UserBehaviorMapper, Use
         implements UserBehaviorService {
 
     private static final String JD_PLATFORM = "jd";
-    private static final long ANALYSIS_CACHE_TTL_MINUTES = 10;
-    private static final long HOT_PRODUCTS_CACHE_TTL_MINUTES = 10;
-
     @Autowired
     private UserBehaviorMapper userBehaviorMapper;
 
@@ -40,13 +38,19 @@ public class UserBehaviorServiceImpl extends ServiceImpl<UserBehaviorMapper, Use
     @Autowired
     private AnalysisCacheService analysisCacheService;
 
+    @Value("${app.cache.analysis-ttl-minutes:120}")
+    private long analysisCacheTtlMinutes;
+
+    @Value("${app.cache.hot-products-ttl-minutes:180}")
+    private long hotProductsCacheTtlMinutes;
+
     /**
      * 加载首页仪表盘数据，并通过统一缓存服务降低聚合查询频率。
      */
     @Override
     public DashboardVO getDashboardData() {
         String cacheKey = Constants.REDIS_ANALYSIS_PREFIX + "dashboard";
-        return analysisCacheService.getOrLoad(cacheKey, ANALYSIS_CACHE_TTL_MINUTES, DashboardVO.class,
+        return analysisCacheService.getOrLoad(cacheKey, analysisCacheTtlMinutes, DashboardVO.class,
                 this::loadDashboardData);
     }
 
@@ -56,7 +60,7 @@ public class UserBehaviorServiceImpl extends ServiceImpl<UserBehaviorMapper, Use
     @Override
     public List<Map<String, Object>> getBehaviorTypeDistribution() {
         String cacheKey = Constants.REDIS_ANALYSIS_PREFIX + "behavior-distribution";
-        return analysisCacheService.getOrLoad(cacheKey, ANALYSIS_CACHE_TTL_MINUTES,
+        return analysisCacheService.getOrLoad(cacheKey, analysisCacheTtlMinutes,
                 userBehaviorMapper::countByBehaviorType);
     }
 
@@ -79,7 +83,7 @@ public class UserBehaviorServiceImpl extends ServiceImpl<UserBehaviorMapper, Use
         String cacheKey = Constants.REDIS_ANALYSIS_PREFIX + "daily-trend:" + normalizedStartDate + ":" + normalizedEndDate;
         String finalStartDate = normalizedStartDate;
         String finalEndDate = normalizedEndDate;
-        return analysisCacheService.getOrLoad(cacheKey, ANALYSIS_CACHE_TTL_MINUTES,
+        return analysisCacheService.getOrLoad(cacheKey, analysisCacheTtlMinutes,
                 () -> userBehaviorMapper.getDailyBehaviorStats(finalStartDate, finalEndDate));
     }
 
@@ -89,7 +93,7 @@ public class UserBehaviorServiceImpl extends ServiceImpl<UserBehaviorMapper, Use
     @Override
     public List<Map<String, Object>> getHotProductsByView(int limit) {
         String cacheKey = Constants.REDIS_ANALYSIS_PREFIX + "hot-products:view:" + limit;
-        return analysisCacheService.getOrLoad(cacheKey, HOT_PRODUCTS_CACHE_TTL_MINUTES,
+        return analysisCacheService.getOrLoad(cacheKey, hotProductsCacheTtlMinutes,
                 () -> userBehaviorMapper.getHotProductsByView(limit));
     }
 
@@ -99,7 +103,7 @@ public class UserBehaviorServiceImpl extends ServiceImpl<UserBehaviorMapper, Use
     @Override
     public List<Map<String, Object>> getHotProductsByBuy(int limit) {
         String cacheKey = Constants.REDIS_ANALYSIS_PREFIX + "hot-products:buy:" + limit;
-        return analysisCacheService.getOrLoad(cacheKey, HOT_PRODUCTS_CACHE_TTL_MINUTES,
+        return analysisCacheService.getOrLoad(cacheKey, hotProductsCacheTtlMinutes,
                 () -> userBehaviorMapper.getHotProductsByBuy(limit));
     }
 
@@ -112,7 +116,7 @@ public class UserBehaviorServiceImpl extends ServiceImpl<UserBehaviorMapper, Use
         int safePageSize = pageSize <= 0 ? 10 : Math.min(pageSize, 50);
         int offset = (safePage - 1) * safePageSize;
         String cacheKey = Constants.REDIS_ANALYSIS_PREFIX + "hot-products:public-metrics:" + JD_PLATFORM + ":" + onlyWithMetrics + ":" + safePage + ":" + safePageSize;
-        return analysisCacheService.getOrLoad(cacheKey, HOT_PRODUCTS_CACHE_TTL_MINUTES,
+        return analysisCacheService.getOrLoad(cacheKey, hotProductsCacheTtlMinutes,
                 HotProductsPublicMetricsPageVO.class,
                 () -> loadHotProductsPublicMetricsPage(offset, safePage, safePageSize, onlyWithMetrics));
     }
@@ -123,7 +127,7 @@ public class UserBehaviorServiceImpl extends ServiceImpl<UserBehaviorMapper, Use
     @Override
     public List<Map<String, Object>> getHotCategories(int limit) {
         String cacheKey = Constants.REDIS_ANALYSIS_PREFIX + "hot-categories:" + limit;
-        return analysisCacheService.getOrLoad(cacheKey, HOT_PRODUCTS_CACHE_TTL_MINUTES,
+        return analysisCacheService.getOrLoad(cacheKey, hotProductsCacheTtlMinutes,
                 () -> userBehaviorMapper.getHotCategories(limit));
     }
 
@@ -133,7 +137,7 @@ public class UserBehaviorServiceImpl extends ServiceImpl<UserBehaviorMapper, Use
     @Override
     public Map<String, Object> getConversionFunnel() {
         String cacheKey = Constants.REDIS_ANALYSIS_PREFIX + "conversion-funnel";
-        return analysisCacheService.getOrLoad(cacheKey, ANALYSIS_CACHE_TTL_MINUTES,
+        return analysisCacheService.getOrLoad(cacheKey, analysisCacheTtlMinutes,
                 userBehaviorMapper::getConversionFunnel);
     }
 
@@ -143,7 +147,7 @@ public class UserBehaviorServiceImpl extends ServiceImpl<UserBehaviorMapper, Use
     @Override
     public List<Map<String, Object>> getHourlyDistribution() {
         String cacheKey = Constants.REDIS_ANALYSIS_PREFIX + "hourly-distribution";
-        return analysisCacheService.getOrLoad(cacheKey, ANALYSIS_CACHE_TTL_MINUTES,
+        return analysisCacheService.getOrLoad(cacheKey, analysisCacheTtlMinutes,
                 userBehaviorMapper::getHourlyDistribution);
     }
 
@@ -153,7 +157,7 @@ public class UserBehaviorServiceImpl extends ServiceImpl<UserBehaviorMapper, Use
     @Override
     public Map<String, Object> getDataOverview() {
         String cacheKey = Constants.REDIS_ANALYSIS_PREFIX + "overview";
-        return analysisCacheService.getOrLoad(cacheKey, ANALYSIS_CACHE_TTL_MINUTES, () -> {
+        return analysisCacheService.getOrLoad(cacheKey, analysisCacheTtlMinutes, () -> {
             Map<String, Object> overview = new HashMap<>();
             overview.put("totalUsers", userBehaviorMapper.countDistinctUsers());
             overview.put("totalProducts", userBehaviorMapper.countDistinctItems());

@@ -9,13 +9,13 @@ spring:
   mvc:
     pathmatch:
       matching-strategy: ant_path_matcher
-  
+
   # 数据库配置
   datasource:
     driver-class-name: com.mysql.cj.jdbc.Driver
-    url: jdbc:mysql://localhost:3306/ecommerce_analysis?useUnicode=true&characterEncoding=utf-8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true&rewriteBatchedStatements=true
-    username: root
-    password: lmh041105666
+    url: ${SPRING_DATASOURCE_URL:jdbc:mysql://localhost:3306/ecommerce_analysis?useUnicode=true&characterEncoding=utf-8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true&rewriteBatchedStatements=true}
+    username: ${SPRING_DATASOURCE_USERNAME:root}
+    password: ${SPRING_DATASOURCE_PASSWORD:lmh041105666}
     hikari:
       # 将会话级 InnoDB 锁等待超时提高到 300 秒，减少大批量分析时的误超时
       connection-init-sql: SET SESSION innodb_lock_wait_timeout = 300
@@ -24,29 +24,35 @@ spring:
       connection-timeout: 30000
       idle-timeout: 600000
       max-lifetime: 1800000
-  
-  # Redis配置
-  data:
-    redis:
-      host: localhost
-      port: 6379
-      password: 
-      database: 0
-      timeout: 10000ms
-      lettuce:
-        pool:
-          max-active: 8
-          max-wait: -1ms
-          max-idle: 8
-          min-idle: 0
-  
+
+  # Redis 配置（Spring Boot 2.7 使用 spring.redis 前缀）
+  redis:
+    host: ${SPRING_REDIS_HOST:localhost}
+    port: ${SPRING_REDIS_PORT:6379}
+    password: ${SPRING_REDIS_PASSWORD:}
+    database: ${SPRING_REDIS_DATABASE:0}
+    timeout: ${SPRING_REDIS_TIMEOUT:500ms}
+    lettuce:
+      pool:
+        max-active: 8
+        max-wait: -1ms
+        max-idle: 8
+        min-idle: 0
+
   # 文件上传配置
   servlet:
     multipart:
       max-file-size: -1
       max-request-size: -1
 
-# MyBatis Plus配置
+app:
+  cache:
+    analysis-ttl-minutes: 120
+    hot-products-ttl-minutes: 180
+    profile-ttl-minutes: 180
+    redis-failure-cooldown-seconds: 300
+
+# MyBatis Plus 配置
 mybatis-plus:
   mapper-locations: classpath:mapper/**/*.xml
   type-aliases-package: com.ecommerce.analysis.entity
@@ -60,7 +66,7 @@ mybatis-plus:
     map-underscore-to-camel-case: true
     log-impl: org.apache.ibatis.logging.nologging.NoLoggingImpl
 
-# JWT配置
+# JWT 配置
 jwt:
   secret: ecommerce-behavior-analysis-secret-key-2024-very-long-secret-key
   expiration: 86400000  # 24小时

@@ -101,7 +101,9 @@
       <main class="content">
         <router-view v-slot="{ Component }">
           <transition name="fade" mode="out-in">
-            <component :is="Component" />
+            <keep-alive :include="cacheableViewNames" :max="5">
+              <component :is="Component" />
+            </keep-alive>
           </transition>
         </router-view>
       </main>
@@ -124,6 +126,7 @@ const router = useRouter()
 const userStore = useUserStore()
 
 const isCollapsed = ref(false)
+const cacheableViewNames = ['Dashboard', 'BehaviorAnalysis', 'UserProfile', 'ProductAnalysis', 'FunnelAnalysis']
 
 const activeMenu = computed(() => route.path)
 const currentTitle = computed(() => route.meta.title || '')

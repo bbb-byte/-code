@@ -393,18 +393,18 @@ public class PublicTaskServiceImpl implements PublicTaskService {
     private void runAnalyzeTask(String taskId, int clusterK) {
         PublicTaskStatusVO status = tasks.get(taskId);
         try {
-            updateProgress(status, 15D, "姝ｅ湪璁＄畻鐢ㄦ埛 RFM 鎸囨爣");
+            updateProgress(status, 15D, "正在计算用户 RFM 指标");
             rfmService.calculateAllUserRFM();
 
-            updateProgress(status, 70D, "姝ｅ湪鎵ц K-Means 鑱氱被鍒嗘瀽");
+            updateProgress(status, 70D, "正在执行 K-Means 聚类分析");
             rfmService.performKMeansClustering(clusterK);
 
             Map<String, Object> result = new HashMap<>();
             result.put("clusterK", clusterK);
-            completeTask(status, "鏁版嵁鍒嗘瀽瀹屾垚", result);
+            completeTask(status, "数据分析完成", result);
         } catch (Throwable e) {
-            log.error("鏁版嵁鍒嗘瀽浠诲姟寮傚父", e);
-            failTask(status, "鏁版嵁鍒嗘瀽澶辫触: " + e.getMessage());
+            log.error("数据分析任务异常", e);
+            failTask(status, "数据分析失败: " + e.getMessage());
         }
     }
 

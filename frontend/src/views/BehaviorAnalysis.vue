@@ -45,6 +45,12 @@
   </div>
 </template>
 
+<script>
+export default {
+  name: 'BehaviorAnalysis'
+}
+</script>
+
 <script setup>
 import { ref, onMounted, onUnmounted, markRaw } from 'vue'
 import { getDashboard, getDailyTrend } from '@/api/analysis'

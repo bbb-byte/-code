@@ -148,13 +148,13 @@
                 <el-icon><DataAnalysis /></el-icon> 执行分析
               </el-button>
             </el-form-item>
-            <div v-if="currentPublicTask?.taskType === 'analyze'" class="analyze-task-tip">
+            <div v-if="currentAnalyzeTask" class="analyze-task-tip">
               <el-progress
-                :percentage="Math.max(0, Math.min(100, Number(currentPublicTask?.progress || 5)))"
-                :status="currentPublicTask?.running ? '' : (currentPublicTask?.status === 'success' ? 'success' : 'exception')"
+                :percentage="Math.max(0, Math.min(100, Number(currentAnalyzeTask?.progress || 5)))"
+                :status="currentAnalyzeTask?.running ? '' : (currentAnalyzeTask?.status === 'success' ? 'success' : 'exception')"
               />
               <div class="analyze-task-text">
-                {{ currentPublicTask?.message || '分析任务状态同步中...' }}
+                {{ currentAnalyzeTask?.message || '分析任务状态同步中...' }}
               </div>
             </div>
             <div class="analyze-tips">
@@ -681,6 +681,7 @@ const scoreTableRef = ref(null)
 const confirmedMappingRows = ref([])
 const mappingSchemaHint = ref('')
 const currentPublicTask = ref(null)
+const currentAnalyzeTask = ref(null)
 const lastStartedTaskId = ref('')
 const scoreEditDialogVisible = ref(false)
 const editingScoreRow = ref(null)
@@ -739,6 +740,7 @@ const logs = ref([
 
 let progressTimer = null
 let publicTaskTimer = null
+let analyzeTaskTimer = null
 const PUBLIC_TASK_STORAGE_KEY = 'data-manage:last-public-task-id'
 
 function createEmptyImportStatus() {
@@ -972,6 +974,13 @@ const clearPublicTaskTimer = () => {
   }
 }
 
+const clearAnalyzeTaskTimer = () => {
+  if (analyzeTaskTimer) {
+    clearInterval(analyzeTaskTimer)
+    analyzeTaskTimer = null
+  }
+}
+
 const persistPublicTaskId = (taskId) => {
   if (!taskId) {
     localStorage.removeItem(PUBLIC_TASK_STORAGE_KEY)
@@ -997,36 +1006,73 @@ const handleCancelTask = async () => {
   }
 }
 
-const pollPublicTask = (taskId, handlers = {}) => {
-  clearPublicTaskTimer()
+const pollTaskProgress = (taskId, options = {}) => {
+  const {
+    timerType = 'public',
+    setTask = () => {},
+    persistTaskId = false,
+    onProgress,
+    onSuccess,
+    onFailed,
+    onFinally
+  } = options
+  const clearTimer = timerType === 'analyze' ? clearAnalyzeTaskTimer : clearPublicTaskTimer
+
+  clearTimer()
   const tick = async () => {
     try {
       const res = await getPublicTaskProgress(taskId)
       const task = res.data
-      currentPublicTask.value = task
-      persistPublicTaskId(task?.taskId || '')
-      if (task?.taskType === 'analyze') {
-        analyzing.value = !!task?.running
+      setTask(task)
+      if (persistTaskId) {
+        persistPublicTaskId(task?.taskId || '')
       }
+      if (onProgress) onProgress(task)
       if (task?.running) {
         return
       }
-      clearPublicTaskTimer()
+      clearTimer()
       if (task?.status === 'success') {
-        if (handlers.onSuccess) await handlers.onSuccess(task)
+        if (onSuccess) await onSuccess(task)
       } else {
-        if (handlers.onFailed) handlers.onFailed(task)
+        if (onFailed) onFailed(task)
       }
-      if (handlers.onFinally) handlers.onFinally(task)
+      if (onFinally) onFinally(task)
     } catch (error) {
-      clearPublicTaskTimer()
-      if (handlers.onFailed) handlers.onFailed({ message: error.response?.data?.message || error.message })
-      if (handlers.onFinally) handlers.onFinally()
+      clearTimer()
+      if (onFailed) onFailed({ message: error.response?.data?.message || error.message })
+      if (onFinally) onFinally()
     }
   }
-  publicTaskTimer = setInterval(tick, 2000)
+  const timer = setInterval(tick, 2000)
+  if (timerType === 'analyze') {
+    analyzeTaskTimer = timer
+  } else {
+    publicTaskTimer = timer
+  }
   tick()
 }
+
+const pollPublicTask = (taskId, handlers = {}) => pollTaskProgress(taskId, {
+  ...handlers,
+  timerType: 'public',
+  setTask: (task) => {
+    currentPublicTask.value = task
+  },
+  persistTaskId: true
+})
+
+const pollAnalyzeTask = (taskId, handlers = {}) => pollTaskProgress(taskId, {
+  ...handlers,
+  timerType: 'analyze',
+  setTask: (task) => {
+    currentAnalyzeTask.value = task
+  },
+  onProgress: (task) => {
+    analyzing.value = !!task?.running
+    if (handlers.onProgress) handlers.onProgress(task)
+  }
+})
 
 const loadScorePreview = async () => {
   loadingScorePreview.value = true
@@ -1236,6 +1282,14 @@ const handleImport = async () => {
     return
   }
 
+  const maxUploadSize = 200 * 1024 * 1024
+  if (selectedImportFile.value.size > maxUploadSize) {
+    const message = 'CSV 文件超过 200MB，请先拆分或压缩后再导入'
+    ElMessage.error(message)
+    addLog('导入失败: ' + message, 'danger')
+    return
+  }
+
   if (progressTimer) clearInterval(progressTimer)
   importing.value = true
   importProgress.value = 0
@@ -1273,9 +1327,7 @@ const handleAnalyze = async () => {
   
   try {
     const res = await startAnalyzeTask(analyzeForm.clusterK)
-    persistPublicTaskId(res.data.taskId || '')
-    lastStartedTaskId.value = res.data.taskId || ''
-    currentPublicTask.value = {
+    currentAnalyzeTask.value = {
       taskId: res.data.taskId,
       taskType: 'analyze',
       running: true,
@@ -1284,8 +1336,8 @@ const handleAnalyze = async () => {
       message: '分析任务已启动'
     }
     addLog(`分析任务已启动，任务ID: ${res.data.taskId}`, 'primary')
-    pollPublicTask(res.data.taskId, {
-      onSuccess: async () => {
+    pollAnalyzeTask(res.data.taskId, {
+      onSuccess: async (task) => {
         addLog('数据分析完成', 'success')
         ElMessage.success('数据分析完成')
         await loadOverview()
@@ -1301,7 +1353,7 @@ const handleAnalyze = async () => {
   } catch (error) {
     addLog('分析失败: ' + (error.response?.data?.message || error.message), 'danger')
   } finally {
-    if (!(currentPublicTask.value?.taskType === 'analyze' && currentPublicTask.value?.running)) {
+    if (!(currentAnalyzeTask.value?.taskType === 'analyze' && currentAnalyzeTask.value?.running)) {
       analyzing.value = false
     }
   }
@@ -1386,6 +1438,7 @@ onMounted(() => {
 onUnmounted(() => {
   if (progressTimer) clearInterval(progressTimer)
   clearPublicTaskTimer()
+  clearAnalyzeTaskTimer()
 })
 </script>
 

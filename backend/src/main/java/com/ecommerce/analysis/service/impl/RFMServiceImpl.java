@@ -11,6 +11,7 @@ import org.apache.commons.math3.ml.clustering.CentroidCluster;
 import org.apache.commons.math3.ml.clustering.DoublePoint;
 import org.apache.commons.math3.ml.clustering.KMeansPlusPlusClusterer;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -36,8 +37,6 @@ public class RFMServiceImpl implements RFMService {
 
     private static final String ANALYSIS_BUSY_MESSAGE = "已有画像分析任务正在执行，请稍后重试";
     private static final String NON_CONVERTED_GROUP = "未转化用户";
-    private static final long PROFILE_CACHE_TTL_MINUTES = 10;
-
     @Autowired
     private UserBehaviorMapper userBehaviorMapper;
 
@@ -46,6 +45,9 @@ public class RFMServiceImpl implements RFMService {
 
     @Autowired
     private AnalysisCacheService analysisCacheService;
+
+    @Value("${app.cache.profile-ttl-minutes:180}")
+    private long profileCacheTtlMinutes;
 
     private final AtomicBoolean analysisRunning = new AtomicBoolean(false);
 
@@ -343,7 +345,7 @@ public class RFMServiceImpl implements RFMService {
     @Override
     public List<Map<String, Object>> getUserGroupDistribution() {
         String cacheKey = Constants.REDIS_PROFILE_PREFIX + "group-distribution";
-        return analysisCacheService.getOrLoad(cacheKey, PROFILE_CACHE_TTL_MINUTES,
+        return analysisCacheService.getOrLoad(cacheKey, profileCacheTtlMinutes,
                 userProfileMapper::countByUserGroup);
     }
 
@@ -353,7 +355,7 @@ public class RFMServiceImpl implements RFMService {
     @Override
     public List<Map<String, Object>> getClusterDistribution() {
         String cacheKey = Constants.REDIS_PROFILE_PREFIX + "cluster-distribution";
-        return analysisCacheService.getOrLoad(cacheKey, PROFILE_CACHE_TTL_MINUTES,
+        return analysisCacheService.getOrLoad(cacheKey, profileCacheTtlMinutes,
                 userProfileMapper::countByCluster);
     }
 
@@ -363,7 +365,7 @@ public class RFMServiceImpl implements RFMService {
     @Override
     public List<Map<String, Object>> getRFMScoreDistribution() {
         String cacheKey = Constants.REDIS_PROFILE_PREFIX + "rfm-distribution";
-        return analysisCacheService.getOrLoad(cacheKey, PROFILE_CACHE_TTL_MINUTES,
+        return analysisCacheService.getOrLoad(cacheKey, profileCacheTtlMinutes,
                 userProfileMapper::getRfmScoreDistribution);
     }
 
@@ -373,7 +375,7 @@ public class RFMServiceImpl implements RFMService {
     @Override
     public List<Map<String, Object>> getClusterCenters() {
         String cacheKey = Constants.REDIS_PROFILE_PREFIX + "cluster-centers";
-        return analysisCacheService.getOrLoad(cacheKey, PROFILE_CACHE_TTL_MINUTES,
+        return analysisCacheService.getOrLoad(cacheKey, profileCacheTtlMinutes,
                 userProfileMapper::getClusterCenters);
     }
 
@@ -383,7 +385,7 @@ public class RFMServiceImpl implements RFMService {
     @Override
     public List<UserProfile> getHighValueUsers(int limit) {
         String cacheKey = Constants.REDIS_PROFILE_PREFIX + "high-value-users:" + limit;
-        return analysisCacheService.getOrLoadList(cacheKey, PROFILE_CACHE_TTL_MINUTES, UserProfile.class,
+        return analysisCacheService.getOrLoadList(cacheKey, profileCacheTtlMinutes, UserProfile.class,
                 () -> userProfileMapper.getHighValueUsers(limit));
     }
 
@@ -394,7 +396,7 @@ public class RFMServiceImpl implements RFMService {
     public List<UserProfile> getTopUsersByGroup(String userGroup, int limit) {
         String normalizedGroup = userGroup == null ? "all" : userGroup;
         String cacheKey = Constants.REDIS_PROFILE_PREFIX + "top-users:" + normalizedGroup + ":" + limit;
-        return analysisCacheService.getOrLoadList(cacheKey, PROFILE_CACHE_TTL_MINUTES, UserProfile.class,
+        return analysisCacheService.getOrLoadList(cacheKey, profileCacheTtlMinutes, UserProfile.class,
                 () -> userProfileMapper.getTopUsersByGroup(userGroup, limit));
     }
 

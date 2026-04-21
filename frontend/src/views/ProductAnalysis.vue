@@ -105,6 +105,12 @@
   </div>
 </template>
 
+<script>
+export default {
+  name: 'ProductAnalysis'
+}
+</script>
+
 <script setup>
 import { ref, onMounted, onUnmounted } from 'vue'
 import { getHotProductsByBuy, getHotProductsWithPublicMetrics, getHotProductsByView, getHotCategories } from '@/api/analysis'

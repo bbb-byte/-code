@@ -118,6 +118,12 @@
   </div>
 </template>
 
+<script>
+export default {
+  name: 'UserProfile'
+}
+</script>
+
 <script setup>
 import { ref, onMounted, onUnmounted } from 'vue'
 import { getGroupDistribution, getClusterDistribution, getRFMDistribution, 

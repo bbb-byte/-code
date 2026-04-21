@@ -69,6 +69,12 @@
   </div>
 </template>
 
+<script>
+export default {
+  name: 'Dashboard'
+}
+</script>
+
 <script setup>
 import { ref, onMounted, onUnmounted, markRaw } from 'vue'
 import { getDashboard } from '@/api/analysis'

@@ -3,6 +3,8 @@ services:
     image: redis:7-alpine
     container_name: ecommerce-redis
     restart: always
+    ports:
+      - "6379:6379"
     volumes:
       - redis_data:/data
     networks:
@@ -20,7 +22,9 @@ services:
       SPRING_DATASOURCE_URL: jdbc:mysql://${MYSQL_HOST:-host.docker.internal}:${MYSQL_PORT:-3306}/${MYSQL_DATABASE:-ecommerce_analysis}?useUnicode=true&characterEncoding=utf-8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true&rewriteBatchedStatements=true
       SPRING_DATASOURCE_USERNAME: ${MYSQL_USERNAME:-root}
       SPRING_DATASOURCE_PASSWORD: ${MYSQL_PASSWORD:-}
-      SPRING_DATA_REDIS_HOST: redis
+      SPRING_REDIS_HOST: redis
+      SPRING_REDIS_PORT: 6379
+      SPRING_REDIS_TIMEOUT: 500ms
       PUBLIC_TASK_PYTHON: ${PUBLIC_TASK_PYTHON:-python3}
       PUBLIC_TASK_BROWSER_PATH: ${PUBLIC_TASK_BROWSER_PATH:-}
       PUBLIC_TASK_BROWSER_CHANNEL: ${PUBLIC_TASK_BROWSER_CHANNEL:-chrome}
