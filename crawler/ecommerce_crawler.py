@@ -5,7 +5,11 @@ import logging
 import os
 import random
 import re
+import shutil
 import time
+from urllib.error import HTTPError, URLError
+from urllib.parse import urlencode
+from urllib.request import Request, urlopen
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -17,6 +21,7 @@ logger = logging.getLogger(__name__)
 
 JD_PLATFORM = "jd"
 JD_COMMENT_SUMMARY_URL = "club.jd.com/comment/productCommentSummaries.action"
+JD_COMMENT_SUMMARY_API = "https://club.jd.com/comment/productCommentSummaries.action"
 DEFAULT_TIMEOUT = 15
 DEFAULT_SLEEP_SECONDS = 5.0
 DEFAULT_MAX_RETRIES = 3
@@ -99,8 +104,26 @@ class JDPublicSatisfactionCrawler:
         if self.fixture_dir:
             return
 
+        is_linux = os.name != "nt"
+        auto_headless = is_linux and not bool(os.getenv("DISPLAY") or os.getenv("WAYLAND_DISPLAY"))
         debug_profile_dir = self.browser_user_data_dir or (Path(__file__).resolve().parent / "output" / "browser-profile")
         debug_profile_dir.mkdir(parents=True, exist_ok=True)
+
+        def _make_options(port: int) -> ChromiumOptions:
+            co = ChromiumOptions()
+            browser_path = self.browser_path
+            if not browser_path and is_linux:
+                browser_path = shutil.which("chromium") or shutil.which("google-chrome") or ""
+            if browser_path:
+                co.set_browser_path(browser_path)
+            co.set_local_port(port)
+            co.set_user_data_path(str(debug_profile_dir))
+            if self.headless or auto_headless:
+                co.headless()
+            if is_linux:
+                co.set_argument("--no-sandbox")
+                co.set_argument("--disable-dev-shm-usage")
+            return co
 
         # 第一步：尝试连接已有的调试 Chrome
         try:
@@ -115,13 +138,7 @@ class JDPublicSatisfactionCrawler:
 
         # 第二步：自动启动带调试端口的 Chrome
         try:
-            co = ChromiumOptions()
-            if self.browser_path:
-                co.set_browser_path(self.browser_path)
-            co.set_local_port(DEFAULT_CDP_PORT)
-            co.set_user_data_path(str(debug_profile_dir))
-            if self.headless:
-                co.headless()
+            co = _make_options(DEFAULT_CDP_PORT)
             self.browser = Chromium(co)
             self._owns_browser = True
             logger.info("✓ 已自动启动 Chrome（端口 9222，Debug Profile）")
@@ -131,14 +148,9 @@ class JDPublicSatisfactionCrawler:
             logger.warning("自动启动 Chrome 失败: %s，回退到独立模式", e)
 
         # 回退：独立 Chrome
-        co = ChromiumOptions()
-        if self.browser_path:
-            co.set_browser_path(self.browser_path)
-        co.set_local_port(DEFAULT_FALLBACK_CDP_PORT)
-        co.set_user_data_path(str(debug_profile_dir))
-        if self.headless:
-            co.headless()
+        co = _make_options(DEFAULT_FALLBACK_CDP_PORT)
         self.browser = Chromium(co)
+        self._owns_browser = True
         logger.info("Chrome 浏览器已独立启动（端口 19222）")
 
     def _close_browser(self) -> None:
@@ -262,6 +274,39 @@ class JDPublicSatisfactionCrawler:
             return json.loads(match.group(1))
         return json.loads(raw)
 
+    def fetch_comment_summary_via_http(self, row: MappingRow) -> Dict[str, object]:
+        """优先直接请求公开评论摘要接口，减少对页面懒加载的依赖。"""
+        query = urlencode({
+            "referenceIds": row.source_product_id,
+            "callback": "fetchJSON_comment98vv",
+        })
+        request = Request(
+            f"{JD_COMMENT_SUMMARY_API}?{query}",
+            headers={
+                "User-Agent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/124.0.0.0 Safari/537.36"
+                ),
+                "Referer": row.source_url,
+                "Accept": "*/*",
+            },
+        )
+        try:
+            with urlopen(request, timeout=self.timeout) as response:
+                body = response.read().decode("utf-8", errors="replace")
+            payload = self._parse_jsonp(body)
+            summaries = payload.get("CommentsCount") or payload.get("productCommentSummaries") or payload.get("productCommentSummary") or []
+            if isinstance(summaries, list) and summaries:
+                logger.info("通过公开评论摘要接口获取到评论数据: item_id=%s", row.item_id)
+                return summaries[0]
+            if isinstance(summaries, dict) and summaries:
+                logger.info("通过公开评论摘要接口获取到评论数据: item_id=%s", row.item_id)
+                return summaries
+        except (HTTPError, URLError, TimeoutError, json.JSONDecodeError, ValueError) as exc:
+            logger.debug("公开评论摘要接口请求失败: item_id=%s error=%s", row.item_id, exc)
+        return {}
+
     def fetch_comment_summary_via_browser(self, row: MappingRow) -> Dict[str, object]:
         """通过真实浏览器访问商品页，提取评价数据。
 
@@ -277,6 +322,10 @@ class JDPublicSatisfactionCrawler:
             sample_json = self.fixture_dir / "jd_comment_summary.sample.json"
             if sample_json.exists():
                 return self.parse_summary_payload(sample_json.read_text(encoding="utf-8"))[0]
+
+        summary = self.fetch_comment_summary_via_http(row)
+        if summary:
+            return summary
 
         tab = self.browser.latest_tab
 

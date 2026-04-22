@@ -88,7 +88,8 @@ start-windows.bat
 - 检查 Docker / Docker Desktop 是否可用
 - 若 `.env` 不存在，则从 `.env.example` 自动生成
 - 自动创建 `runtime/browser-profile` 目录
-- 统一执行 `docker compose up -d --build`
+- 默认执行 `docker compose up -d`，复用已有镜像以加快启动
+- 需要重新构建镜像时，可使用 `./start.sh --build`、`.\start-windows.ps1 -Build` 或 `start-windows.bat --build`
 - 一次性启动 `redis`、`backend`、`public-task-worker`、`frontend`
 - 后端通过 `.env` 中的 `MYSQL_*` 配置连接宿主机 MySQL，不再额外启动 MySQL 容器
 该脚本会自动检查 Docker 环境、启动数据库容器，并在新终端窗口中启动前后端服务。
@@ -123,7 +124,10 @@ npm run dev
 ## Docker 部署
 
 ```bash
-# 一键启动所有服务
+# 快速启动所有服务（默认不重建）
+docker compose up -d
+
+# 依赖或 Dockerfile 变更后重新构建
 docker compose up -d --build
 
 # 查看日志
@@ -195,6 +199,7 @@ MIT License
 ## Start / Stop Notes
 
 - Start scripts now use Docker Compose to start `redis`, `backend`, `public-task-worker`, and `frontend`.
+- Start scripts default to `docker compose up -d` for faster restarts. Use the build flag only when dependencies or Dockerfiles change.
 - Local MySQL is not started by Docker. Please make sure your host MySQL service is already running before executing `start.sh`, `start-windows.ps1`, or `start-windows.bat`.
 - Stop scripts now use `docker compose down --remove-orphans` to stop the project containers cleanly.
 - Local MySQL is not managed by the stop scripts and will remain running.

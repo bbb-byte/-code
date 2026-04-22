@@ -40,8 +40,17 @@
     <el-row :gutter="24">
       <el-col :span="24">
         <div class="card metric-card">
-          <div class="card-title">热销商品公网满意度补充指标（京东公开评价摘要）</div>
+          <div class="card-title">商品公网满意度补充指标（京东公开评价摘要）</div>
           <div class="metric-toolbar">
+            <el-radio-group
+              v-model="metricScope"
+              size="small"
+              :disabled="metricLoading"
+              @change="handleMetricScopeChange"
+            >
+              <el-radio-button label="hot">热销商品</el-radio-button>
+              <el-radio-button label="all">全部商品</el-radio-button>
+            </el-radio-group>
             <el-switch
               v-model="metricOnlyWithMetrics"
               inline-prompt
@@ -132,13 +141,14 @@ const metricPageSize = ref(10)
 const metricTotal = ref(0)
 const metricPageCount = ref(1)
 const metricOnlyWithMetrics = ref(true)
+const metricScope = ref('hot')
 const metricLoading = ref(false)
 
 const loadData = async () => {
   try {
     const [buyRes, metricRes, viewRes, categoryRes] = await Promise.all([
       getHotProductsByBuy(10),
-      getHotProductsWithPublicMetrics(metricPage.value, metricPageSize.value, metricOnlyWithMetrics.value),
+      getHotProductsWithPublicMetrics(metricPage.value, metricPageSize.value, metricOnlyWithMetrics.value, metricScope.value),
       getHotProductsByView(10),
       getHotCategories(10)
     ])
@@ -178,11 +188,17 @@ const handleMetricFilterChange = async () => {
   await loadMetricData()
 }
 
+const handleMetricScopeChange = async () => {
+  if (metricLoading.value) return
+  metricPage.value = 1
+  await loadMetricData()
+}
+
 const loadMetricData = async () => {
   if (metricLoading.value) return
   metricLoading.value = true
   try {
-    const metricRes = await getHotProductsWithPublicMetrics(metricPage.value, metricPageSize.value, metricOnlyWithMetrics.value)
+    const metricRes = await getHotProductsWithPublicMetrics(metricPage.value, metricPageSize.value, metricOnlyWithMetrics.value, metricScope.value)
     const metricPayload = metricRes.data || {}
     metricTotal.value = Number(metricPayload.total || 0)
     metricPageCount.value = Math.max(1, Math.ceil(metricTotal.value / metricPageSize.value))

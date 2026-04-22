@@ -88,9 +88,10 @@ public class AnalysisController {
     public Result<HotProductsPublicMetricsPageVO> getHotProductsWithPublicMetrics(
             @RequestParam(defaultValue = "1") int page,
             @RequestParam(defaultValue = "10") int pageSize,
-            @RequestParam(defaultValue = "true") boolean onlyWithMetrics) {
+            @RequestParam(defaultValue = "true") boolean onlyWithMetrics,
+            @RequestParam(defaultValue = "hot") String scope) {
         HotProductsPublicMetricsPageVO data =
-                userBehaviorService.getHotProductsWithPublicMetrics(page, pageSize, onlyWithMetrics);
+                userBehaviorService.getHotProductsWithPublicMetrics(page, pageSize, onlyWithMetrics, scope);
         return Result.success(data);
     }
 

@@ -7,7 +7,8 @@ from pathlib import Path
 
 
 HOST = "0.0.0.0"
-PORT = 8090
+PORT = int(os.getenv("PUBLIC_TASK_WORKER_PORT", "8090"))
+CONTAINER_WORKSPACE_ROOT = "/workspace"
 
 
 class WorkerHandler(BaseHTTPRequestHandler):
@@ -42,7 +43,7 @@ class WorkerHandler(BaseHTTPRequestHandler):
                 self._send_json(400, {"error": "command must be a non-empty list"})
                 return
 
-            resolved_work_dir = Path(work_dir).resolve()
+            resolved_work_dir = self._resolve_host_path(work_dir)
             if not resolved_work_dir.exists():
                 self._send_json(400, {"error": f"workDir does not exist: {resolved_work_dir}"})
                 return
@@ -52,9 +53,11 @@ class WorkerHandler(BaseHTTPRequestHandler):
                 if value is not None:
                     env[str(key)] = str(value)
 
+            resolved_command = [self._normalize_command_part(part, env) for part in command]
+
             try:
                 completed = subprocess.run(
-                    command,
+                    resolved_command,
                     cwd=str(resolved_work_dir),
                     env=env,
                     stdout=subprocess.PIPE,
@@ -97,9 +100,58 @@ class WorkerHandler(BaseHTTPRequestHandler):
 
     def _resolve_browser_binary(self):
         explicit = os.getenv("PUBLIC_TASK_BROWSER_PATH", "").strip()
-        if explicit:
+        if explicit and not self._looks_like_invalid_windows_drive(explicit):
             return explicit
+        if os.name == "nt":
+            chrome_candidates = [
+                Path(os.getenv("ProgramFiles", "")) / "Google/Chrome/Application/chrome.exe",
+                Path(os.getenv("ProgramFiles(x86)", "")) / "Google/Chrome/Application/chrome.exe",
+                Path(os.getenv("LocalAppData", "")) / "Google/Chrome/Application/chrome.exe",
+            ]
+            for candidate in chrome_candidates:
+                if str(candidate).strip() and candidate.exists():
+                    return str(candidate)
         return shutil.which("chromium") or shutil.which("google-chrome") or ""
+
+    def _looks_like_invalid_windows_drive(self, value):
+        normalized = str(value).strip()
+        if len(normalized) == 1 and normalized.isalpha():
+            return True
+        return len(normalized) <= 3 and normalized[:1].isalpha() and normalized.endswith(":")
+
+    def _workspace_root(self):
+        configured = os.getenv("PUBLIC_TASK_WORKSPACE_ROOT", "").strip()
+        if configured:
+            return Path(configured).resolve()
+        return Path.cwd().resolve()
+
+    def _resolve_host_path(self, value):
+        if value is None:
+            return self._workspace_root()
+        text = str(value).strip()
+        if not text:
+            return self._workspace_root()
+        if text.startswith(CONTAINER_WORKSPACE_ROOT):
+            relative = text[len(CONTAINER_WORKSPACE_ROOT):].lstrip("/\\")
+            return (self._workspace_root() / Path(relative)).resolve()
+        candidate = Path(text)
+        if candidate.is_absolute():
+            return candidate.resolve()
+        return (self._workspace_root() / candidate).resolve()
+
+    def _normalize_command_part(self, value, env):
+        text = str(value)
+        lowered = text.lower()
+        if os.name == "nt":
+            if lowered == "python3":
+                preferred = env.get("PUBLIC_TASK_PYTHON", "").strip()
+                return preferred or shutil.which("python") or "python"
+            if lowered == "python.exe":
+                preferred = env.get("PUBLIC_TASK_PYTHON", "").strip()
+                return preferred or shutil.which("python") or "python"
+        if text.startswith(CONTAINER_WORKSPACE_ROOT):
+            return str(self._resolve_host_path(text))
+        return text
 
     def _send_json(self, status_code, payload):
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")

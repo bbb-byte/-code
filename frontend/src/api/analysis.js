@@ -41,8 +41,8 @@ export function getHotProductsByBuy(limit = 10) {
 /**
  * 获取热门商品及其公网补充指标的分页数据。
  */
-export function getHotProductsWithPublicMetrics(page = 1, pageSize = 10, onlyWithMetrics = true) {
-    return http.get('/analysis/hot-products/public-metrics', { params: { page, pageSize, onlyWithMetrics } })
+export function getHotProductsWithPublicMetrics(page = 1, pageSize = 10, onlyWithMetrics = true, scope = 'hot') {
+    return http.get('/analysis/hot-products/public-metrics', { params: { page, pageSize, onlyWithMetrics, scope } })
 }
 
 /**

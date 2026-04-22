@@ -6,6 +6,15 @@ ROOT="$(cd "$(dirname "$0")" && pwd)"
 ENV_FILE="$ROOT/.env"
 ENV_EXAMPLE="$ROOT/.env.example"
 RUNTIME_DIR="$ROOT/runtime/browser-profile"
+BUILD_MODE=0
+
+for arg in "$@"; do
+  case "$arg" in
+    --build)
+      BUILD_MODE=1
+      ;;
+  esac
+done
 
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -44,9 +53,18 @@ mkdir -p "$RUNTIME_DIR"
 echo -e "${GREEN}Runtime directory ready: $RUNTIME_DIR${NC}"
 echo -e "${YELLOW}Using local MySQL from .env. Please make sure your host MySQL service is already running.${NC}"
 
-echo -e "\n${GREEN}[4/5] Building and starting all services...${NC}"
+echo -e "\n${GREEN}[4/5] Starting services...${NC}"
+if [ "$BUILD_MODE" -eq 1 ]; then
+  echo -e "${YELLOW}Build mode enabled: Docker images will be rebuilt before startup.${NC}"
+else
+  echo -e "${YELLOW}Fast start mode: reusing existing images. Use --build to rebuild when dependencies change.${NC}"
+fi
 cd "$ROOT"
-docker compose up -d --build
+if [ "$BUILD_MODE" -eq 1 ]; then
+  docker compose up -d --build
+else
+  docker compose up -d
+fi
 echo -e "${GREEN}Docker services started.${NC}"
 
 echo -e "\n${GREEN}[5/5] Checking service status...${NC}"
@@ -58,5 +76,9 @@ echo -e "${GREEN}Frontend: http://localhost${NC}"
 echo -e "${GREEN}Backend:  http://localhost:8080/api${NC}"
 echo -e "${GREEN}Swagger:  http://localhost:8080/api/swagger-ui.html${NC}"
 echo -e "${GREEN}Worker:   http://localhost:8090/health${NC}"
-echo -e "${YELLOW}If this is the first run, image build may take a while.${NC}"
+if [ "$BUILD_MODE" -eq 1 ]; then
+  echo -e "${YELLOW}Rebuild completed. Dependency downloads may take a while when images change.${NC}"
+else
+  echo -e "${YELLOW}Started without rebuilding images. Re-run with --build if dependencies or Dockerfiles changed.${NC}"
+fi
 echo -e "${YELLOW}==============================================${NC}"

@@ -2,7 +2,11 @@
 setlocal enabledelayedexpansion
 
 set "PAUSE_ON_EXIT=1"
-if /I "%~1"=="--no-pause" set "PAUSE_ON_EXIT=0"
+set "BUILD_MODE=0"
+for %%A in (%*) do (
+  if /I "%%~A"=="--no-pause" set "PAUSE_ON_EXIT=0"
+  if /I "%%~A"=="--build" set "BUILD_MODE=1"
+)
 
 set "ROOT=%~dp0"
 set "ROOT=%ROOT:~0,-1%"
@@ -62,9 +66,18 @@ echo Runtime directory ready: %RUNTIME_DIR%
 echo Using local MySQL from .env. Please make sure your host MySQL service is already running.
 
 echo.
-echo [4/5] Building and starting all services...
+echo [4/5] Starting services...
+if "%BUILD_MODE%"=="1" (
+  echo Build mode enabled: Docker images will be rebuilt before startup.
+) else (
+  echo Fast start mode: reusing existing images. Use --build to rebuild when dependencies change.
+)
 pushd "%ROOT%"
-docker compose up -d --build
+if "%BUILD_MODE%"=="1" (
+  docker compose up -d --build
+) else (
+  docker compose up -d
+)
 if errorlevel 1 (
   popd
   echo docker compose up failed.
@@ -86,7 +99,11 @@ echo Frontend: http://localhost
 echo Backend:  http://localhost:8080/api
 echo Swagger:  http://localhost:8080/api/swagger-ui.html
 echo Worker:   http://localhost:8090/health
-echo If this is the first run, image build may take a while.
+if "%BUILD_MODE%"=="1" (
+  echo Rebuild completed. Dependency downloads may take a while when images change.
+) else (
+  echo Started without rebuilding images. Re-run with --build if dependencies or Dockerfiles changed.
+)
 echo ==============================================
 goto success
 

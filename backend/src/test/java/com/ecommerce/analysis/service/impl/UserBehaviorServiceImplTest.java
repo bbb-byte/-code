@@ -48,7 +48,7 @@ class UserBehaviorServiceImplTest {
         page.setRows(Arrays.asList(first, second));
 
         when(analysisCacheService.getOrLoad(
-                org.mockito.ArgumentMatchers.eq("analysis:hot-products:public-metrics:jd:false:1:5"),
+                org.mockito.ArgumentMatchers.eq("analysis:hot-products:public-metrics:jd:hot:false:1:5"),
                 org.mockito.ArgumentMatchers.eq(10L),
                 org.mockito.ArgumentMatchers.eq(HotProductsPublicMetricsPageVO.class),
                 org.mockito.ArgumentMatchers.any()))
@@ -60,7 +60,7 @@ class UserBehaviorServiceImplTest {
         ReflectionTestUtils.setField(service, "productPublicMetricMapper", productPublicMetricMapper);
         ReflectionTestUtils.setField(service, "analysisCacheService", analysisCacheService);
 
-        HotProductsPublicMetricsPageVO result = service.getHotProductsWithPublicMetrics(1, 5, false);
+        HotProductsPublicMetricsPageVO result = service.getHotProductsWithPublicMetrics(1, 5, false, "hot");
 
         assertEquals(2, result.getRows().size());
         assertEquals(2L, result.getTotal());
@@ -68,7 +68,7 @@ class UserBehaviorServiceImplTest {
         assertEquals(new BigDecimal("0.9830"), result.getRows().get(0).get("positive_rate"));
         assertEquals(null, result.getRows().get(1).get("source_platform"));
         verify(analysisCacheService).getOrLoad(
-                org.mockito.ArgumentMatchers.eq("analysis:hot-products:public-metrics:jd:false:1:5"),
+                org.mockito.ArgumentMatchers.eq("analysis:hot-products:public-metrics:jd:hot:false:1:5"),
                 org.mockito.ArgumentMatchers.eq(10L),
                 org.mockito.ArgumentMatchers.eq(HotProductsPublicMetricsPageVO.class),
                 org.mockito.ArgumentMatchers.any());

@@ -1,5 +1,6 @@
 param(
-    [switch]$NoPause
+    [switch]$NoPause,
+    [switch]$Build
 )
 
 $ErrorActionPreference = 'Stop'
@@ -75,10 +76,20 @@ try {
     Write-Step "Runtime directory ready: $RuntimeProfileDir" Green
     Write-Step "Using local MySQL from .env. Please make sure your host MySQL service is already running." Yellow
 
-    Write-Step "`n[4/5] Building and starting all services..." Green
+    $composeArgs = @('compose', 'up', '-d')
+    if ($Build) {
+        $composeArgs += '--build'
+    }
+
+    Write-Step "`n[4/5] Starting services..." Green
+    if ($Build) {
+        Write-Step "Build mode enabled: Docker images will be rebuilt before startup." Yellow
+    } else {
+        Write-Step "Fast start mode: reusing existing images. Use -Build to rebuild when dependencies change." Yellow
+    }
     Push-Location $Root
     try {
-        & docker compose up -d --build
+        & docker @composeArgs
         if ($LASTEXITCODE -ne 0) {
             throw "docker compose up failed."
         }
@@ -103,7 +114,11 @@ try {
     Write-Step "Backend:  http://localhost:8080/api" Green
     Write-Step "Swagger:  http://localhost:8080/api/swagger-ui.html" Green
     Write-Step "Worker:   http://localhost:8090/health" Green
-    Write-Step "If this is the first run, image build may take a while." Yellow
+    if ($Build) {
+        Write-Step "Rebuild completed. Dependency downloads may take a while when images change." Yellow
+    } else {
+        Write-Step "Started without rebuilding images. Re-run with -Build if dependencies or Dockerfiles changed." Yellow
+    }
     Write-Step "==============================================" Yellow
 }
 catch {

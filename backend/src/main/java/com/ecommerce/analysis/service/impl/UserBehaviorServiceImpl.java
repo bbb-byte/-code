@@ -111,14 +111,15 @@ public class UserBehaviorServiceImpl extends ServiceImpl<UserBehaviorMapper, Use
      * 返回热门商品与公网补充指标的分页聚合结果。
      */
     @Override
-    public HotProductsPublicMetricsPageVO getHotProductsWithPublicMetrics(int page, int pageSize, boolean onlyWithMetrics) {
+    public HotProductsPublicMetricsPageVO getHotProductsWithPublicMetrics(int page, int pageSize, boolean onlyWithMetrics, String scope) {
         int safePage = Math.max(page, 1);
         int safePageSize = pageSize <= 0 ? 10 : Math.min(pageSize, 50);
         int offset = (safePage - 1) * safePageSize;
-        String cacheKey = Constants.REDIS_ANALYSIS_PREFIX + "hot-products:public-metrics:" + JD_PLATFORM + ":" + onlyWithMetrics + ":" + safePage + ":" + safePageSize;
+        String normalizedScope = normalizeMetricScope(scope);
+        String cacheKey = Constants.REDIS_ANALYSIS_PREFIX + "hot-products:public-metrics:" + JD_PLATFORM + ":" + normalizedScope + ":" + onlyWithMetrics + ":" + safePage + ":" + safePageSize;
         return analysisCacheService.getOrLoad(cacheKey, hotProductsCacheTtlMinutes,
                 HotProductsPublicMetricsPageVO.class,
-                () -> loadHotProductsPublicMetricsPage(offset, safePage, safePageSize, onlyWithMetrics));
+                () -> loadHotProductsPublicMetricsPage(offset, safePage, safePageSize, onlyWithMetrics, normalizedScope));
     }
 
     /**
@@ -236,13 +237,26 @@ public class UserBehaviorServiceImpl extends ServiceImpl<UserBehaviorMapper, Use
      * 执行带分页参数的公网补充指标查询。
      */
     private HotProductsPublicMetricsPageVO loadHotProductsPublicMetricsPage(int offset, int page, int pageSize,
-            boolean onlyWithMetrics) {
+            boolean onlyWithMetrics, String scope) {
         HotProductsPublicMetricsPageVO result = new HotProductsPublicMetricsPageVO();
         result.setPage(page);
         result.setPageSize(pageSize);
-        result.setTotal(productPublicMetricMapper.countHotProductsWithPublicMetrics(onlyWithMetrics, JD_PLATFORM));
-        result.setRows(productPublicMetricMapper.getHotProductsWithPublicMetrics(offset, pageSize, onlyWithMetrics, JD_PLATFORM));
+        if ("all".equals(scope)) {
+            result.setTotal(productPublicMetricMapper.countAllProductsWithPublicMetrics(onlyWithMetrics, JD_PLATFORM));
+            result.setRows(productPublicMetricMapper.getAllProductsWithPublicMetrics(offset, pageSize, onlyWithMetrics, JD_PLATFORM));
+        } else {
+            result.setTotal(productPublicMetricMapper.countHotProductsWithPublicMetrics(onlyWithMetrics, JD_PLATFORM));
+            result.setRows(productPublicMetricMapper.getHotProductsWithPublicMetrics(offset, pageSize, onlyWithMetrics, JD_PLATFORM));
+        }
         return result;
+    }
+
+    private String normalizeMetricScope(String scope) {
+        if (scope == null) {
+            return "hot";
+        }
+        String normalized = scope.trim().toLowerCase();
+        return "all".equals(normalized) ? "all" : "hot";
     }
 
     /**

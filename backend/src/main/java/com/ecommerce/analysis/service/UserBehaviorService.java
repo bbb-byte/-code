@@ -41,7 +41,7 @@ public interface UserBehaviorService extends IService<UserBehavior> {
     /**
      * 获取热门商品及京东公开评价补充指标。
      */
-    HotProductsPublicMetricsPageVO getHotProductsWithPublicMetrics(int page, int pageSize, boolean onlyWithMetrics);
+    HotProductsPublicMetricsPageVO getHotProductsWithPublicMetrics(int page, int pageSize, boolean onlyWithMetrics, String scope);
 
     /**
      * 获取热门类目

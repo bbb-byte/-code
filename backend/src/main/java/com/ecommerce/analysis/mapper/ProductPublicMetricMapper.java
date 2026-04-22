@@ -79,6 +79,54 @@ public interface ProductPublicMetricMapper extends BaseMapper<ProductPublicMetri
     long countHotProductsWithPublicMetrics(@Param("onlyWithMetrics") boolean onlyWithMetrics,
             @Param("sourcePlatform") String sourcePlatform);
 
+    @Select("<script>" +
+            "SELECT ppm.item_id, " +
+            "COALESCE(NULLIF(p.name, ''), CONCAT('product#', ppm.item_id)) AS product_name, " +
+            "p.brand AS brand, " +
+            "p.category_name AS category_name, " +
+            "p.price AS price, " +
+            "COALESCE(behavior.view_count, 0) AS view_count, " +
+            "COALESCE(behavior.buy_count, 0) AS buy_count, " +
+            "pm.source_platform AS source_platform, " +
+            "COALESCE(pm.source_url, ppm.source_url) AS source_url, " +
+            "pm.positive_rate AS positive_rate, " +
+            "pm.review_count AS review_count, " +
+            "pm.shop_score AS shop_score, " +
+            "pm.crawl_status AS crawl_status, " +
+            "pm.crawled_at AS crawled_at, " +
+            "1 AS has_mapping, " +
+            "CASE WHEN pm.id IS NULL THEN 0 ELSE 1 END AS has_public_metric " +
+            "FROM product_public_mapping ppm " +
+            "LEFT JOIN product p ON ppm.item_id = p.item_id " +
+            "LEFT JOIN (" +
+            "  SELECT ub.item_id, " +
+            "         SUM(CASE WHEN behavior_type = 'pv' THEN 1 ELSE 0 END) AS view_count, " +
+            "         SUM(CASE WHEN behavior_type = 'buy' THEN 1 ELSE 0 END) AS buy_count " +
+            "  FROM user_behavior ub " +
+            "  WHERE behavior_type IN ('pv', 'buy') " +
+            "  GROUP BY ub.item_id" +
+            ") behavior ON ppm.item_id = behavior.item_id " +
+            "LEFT JOIN product_public_metric pm ON ppm.item_id = pm.item_id AND pm.source_platform = ppm.source_platform " +
+            "WHERE ppm.source_platform = #{sourcePlatform} " +
+            "  <if test='onlyWithMetrics'>AND pm.id IS NOT NULL</if> " +
+            "ORDER BY COALESCE(behavior.buy_count, 0) DESC, COALESCE(behavior.view_count, 0) DESC, ppm.item_id ASC " +
+            "LIMIT #{offset}, #{limit}" +
+            "</script>")
+    List<Map<String, Object>> getAllProductsWithPublicMetrics(@Param("offset") int offset,
+            @Param("limit") int limit,
+            @Param("onlyWithMetrics") boolean onlyWithMetrics,
+            @Param("sourcePlatform") String sourcePlatform);
+
+    @Select("<script>" +
+            "SELECT COUNT(*) " +
+            "FROM product_public_mapping ppm " +
+            "LEFT JOIN product_public_metric pm ON ppm.item_id = pm.item_id AND pm.source_platform = ppm.source_platform " +
+            "WHERE ppm.source_platform = #{sourcePlatform} " +
+            "<if test='onlyWithMetrics'>AND pm.id IS NOT NULL</if>" +
+            "</script>")
+    long countAllProductsWithPublicMetrics(@Param("onlyWithMetrics") boolean onlyWithMetrics,
+            @Param("sourcePlatform") String sourcePlatform);
+
     @Delete("DELETE FROM product_public_metric WHERE item_id = #{itemId} AND source_platform = #{sourcePlatform}")
     int deleteByItemAndPlatform(@Param("itemId") Long itemId, @Param("sourcePlatform") String sourcePlatform);
 }
