@@ -31,12 +31,13 @@ public interface ProductPublicMetricMapper extends BaseMapper<ProductPublicMetri
 
     @Select("<script>" +
             "SELECT hot.item_id, " +
-            "COALESCE(NULLIF(p.name, ''), CONCAT('product#', hot.item_id)) AS product_name, " +
+            "COALESCE(NULLIF(p.name, ''), NULLIF(ppm.verified_title, ''), CONCAT('product#', hot.item_id)) AS product_name, " +
             "p.brand AS brand, " +
             "p.category_name AS category_name, " +
             "p.price AS price, " +
             "hot.view_count AS view_count, " +
             "hot.buy_count AS buy_count, " +
+            "ppm.verified_title AS verified_title, " +
             "pm.source_platform AS source_platform, " +
             "pm.source_url AS source_url, " +
             "pm.positive_rate AS positive_rate, " +
@@ -81,12 +82,13 @@ public interface ProductPublicMetricMapper extends BaseMapper<ProductPublicMetri
 
     @Select("<script>" +
             "SELECT ppm.item_id, " +
-            "COALESCE(NULLIF(p.name, ''), CONCAT('product#', ppm.item_id)) AS product_name, " +
+            "COALESCE(NULLIF(p.name, ''), NULLIF(ppm.verified_title, ''), CONCAT('product#', ppm.item_id)) AS product_name, " +
             "p.brand AS brand, " +
             "p.category_name AS category_name, " +
             "p.price AS price, " +
             "COALESCE(behavior.view_count, 0) AS view_count, " +
             "COALESCE(behavior.buy_count, 0) AS buy_count, " +
+            "ppm.verified_title AS verified_title, " +
             "pm.source_platform AS source_platform, " +
             "COALESCE(pm.source_url, ppm.source_url) AS source_url, " +
             "pm.positive_rate AS positive_rate, " +

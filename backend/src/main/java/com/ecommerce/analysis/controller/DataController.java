@@ -190,7 +190,7 @@ public class DataController {
     public Result<Map<String, Object>> crawlAttachedSearchData(
             @RequestParam(defaultValue = "crawler/output/recalled_candidates.browser.csv") String candidatePath,
             @RequestParam(defaultValue = "crawler/output/jd_search_browser_metrics_attached.csv") String outputPath,
-            @RequestParam(defaultValue = "http://host.docker.internal:9222") String cdpUrl) {
+            @RequestParam(defaultValue = "http://host.docker.internal:9223") String cdpUrl) {
         String taskId = publicTaskService.startAttachedSearchCrawlTask(candidatePath, outputPath, cdpUrl);
         Map<String, Object> result = new HashMap<>();
         result.put("taskId", taskId);

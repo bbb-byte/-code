@@ -181,15 +181,16 @@
             <ol>
               <li>1. 在上方"数据导入"里先导入 `archive` / Kaggle 行为数据，完成主分析数据入库</li>
               <li>2. 在这里上传"原始行为文件"，例如 Kaggle/archive 原始行为 CSV；如果你已经有商品快照，也可以直接上传"商品快照"文件</li>
-              <li>3. 在宿主机用以下命令打开带远程调试端口的 Chrome，并手动登录京东：<br>
+              <li>3. 当前页面不会自动在 Windows 宿主机启动 Chrome。前端运行在浏览器沙箱里，后端运行在 Docker 容器里，都只能连接一个已经存在的 CDP 地址，不能直接在宿主机替你创建 `chrome.exe` 进程。请先在宿主机用以下命令打开带远程调试端口的 Chrome，并手动登录京东：<br>
                 <code>chrome.exe --remote-debugging-address=0.0.0.0 --remote-debugging-port=9222 --user-data-dir=C:\chrome-jd-profile</code><br>
-                登录后不要关闭这个 Chrome 窗口，然后在下方"宿主机浏览器地址"填入 <code>http://host.docker.internal:9222</code>
+                然后在另一个命令行窗口运行 <code>python scripts\cdp_relay.py</code>，或者直接双击项目根目录下的 <code>start-cdp-relay.bat</code>。登录后不要关闭这两个窗口，然后在下方"宿主机浏览器地址"填入 <code>http://host.docker.internal:9223</code>
               </li>
-              <li>4. 点击"召回候选商品"，系统会接管你已登录的 Chrome 进行搜索，再输出候选商品文件</li>
-              <li>5. 点击"计算映射分数"，生成评分结果预览</li>
-              <li>6. 在评分预览里检查候选商品，必要时点"编辑"修改标题、置信度、核验说明和证据备注</li>
-              <li>7. 勾选通过的候选，点击"一键确认入库"，把结果写入 `product_public_mapping`</li>
-              <li>8. 最后回到上方"公网满意度补充"，点击"采集公网满意度指标"，按已确认映射抓取京东公开评价摘要</li>
+              <li>4. 当前机器上 Chrome 的 DevTools 端口通常只对宿主机本地的 `127.0.0.1:9222` 可见，所以页面默认改为复用 relay 转发出来的 <code>http://host.docker.internal:9223</code>；这个 9223 会再转发到本机的 `127.0.0.1:9222`</li>
+              <li>5. 点击"召回候选商品"，系统会接管你已登录的 Chrome 进行搜索，再输出候选商品文件</li>
+              <li>6. 点击"计算映射分数"，生成评分结果预览</li>
+              <li>7. 在评分预览里检查候选商品，必要时点"编辑"修改标题、置信度、核验说明和证据备注</li>
+              <li>8. 勾选通过的候选，点击"一键确认入库"，把结果写入 `product_public_mapping`</li>
+              <li>9. 最后回到上方"公网满意度补充"，点击"采集公网满意度指标"，按已确认映射抓取京东公开评价摘要</li>
             </ol>
           </div>
         </el-collapse-item>
@@ -278,13 +279,21 @@
             <el-form-item label="宿主机浏览器">
               <el-input
                 v-model="mappingForm.cdpUrl"
-                placeholder="Docker 容器内推荐填写 http://host.docker.internal:9222"
+                placeholder="Docker 容器内推荐填写 http://host.docker.internal:9223"
                 clearable
               >
                 <template #prepend>CDP 地址</template>
               </el-input>
+              <el-collapse style="margin-top: 8px;">
+                <el-collapse-item title="为什么这里不会自动启动宿主机 Chrome？">
+                  <div class="el-upload__tip">
+                    前端页面没有权限直接启动本机 `chrome.exe`，而后端运行在 Docker 容器中，也只能连接已经存在的 CDP 端口。
+                    当前推荐方式是：Chrome 继续监听 `127.0.0.1:9222`，再由宿主机上的 `python scripts\cdp_relay.py` 把 `9223` 转发到 `9222`，页面默认复用 `http://host.docker.internal:9223`。
+                  </div>
+                </el-collapse-item>
+              </el-collapse>
               <div class="el-upload__tip" style="margin-top:4px;">
-                当前召回会优先复用宿主机已登录浏览器，在京东页面搜索框中逐字输入关键词并提交；如果容器提示 192.168.x.x:9222 被拒绝，请用 `--remote-debugging-address=0.0.0.0` 重新启动宿主机 Chrome
+                当前召回会优先复用宿主机已登录浏览器，在京东页面搜索框中逐字输入关键词并提交。推荐顺序：先运行 `chrome.exe --remote-debugging-address=0.0.0.0 --remote-debugging-port=9222 --user-data-dir=C:\chrome-jd-profile`，再运行 `python scripts\cdp_relay.py` 或双击 `start-cdp-relay.bat`，最后在这里使用 `http://host.docker.internal:9223`
               </div>
             </el-form-item>
           </el-col>
@@ -705,7 +714,7 @@ const analyzeForm = reactive({
   clusterK: 5
 })
 
-const DEFAULT_CDP_URL = 'http://host.docker.internal:9222'
+const DEFAULT_CDP_URL = 'http://host.docker.internal:9223'
 
 const mappingForm = reactive({
   sourceDataPath: '',

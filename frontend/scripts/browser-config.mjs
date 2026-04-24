@@ -71,6 +71,13 @@ export async function resolveCdpEndpointCandidates(rawUrl, lookupIpv4 = lookupIp
   const parsed = new URL(normalizedUrl);
   const candidates = [normalizedUrl];
   if (parsed.hostname && !net.isIP(parsed.hostname)) {
+    // On Windows, host.docker.internal resolves to the machine's LAN IP (e.g. 192.168.0.x).
+    // Connecting from Windows to its own LAN IP is often blocked by the OS/firewall.
+    // Insert 127.0.0.1 as a high-priority fallback so the relay can be reached via loopback.
+    const loopbackUrl = `${parsed.protocol}//127.0.0.1:${parsed.port}`;
+    if (!candidates.includes(loopbackUrl)) {
+      candidates.push(loopbackUrl);
+    }
     const ipv4Addresses = await lookupIpv4(parsed.hostname);
     for (const address of ipv4Addresses) {
       const candidateUrl = `${parsed.protocol}//${address}:${parsed.port}`;
@@ -83,6 +90,7 @@ export async function resolveCdpEndpointCandidates(rawUrl, lookupIpv4 = lookupIp
   return candidates;
 }
 
+
 export function classifyCdpConnectionError(error) {
   const message = String(error?.message || error || "");
   const failedWhileFetchingWebsocket = message.includes("retrieving websocket url");
@@ -91,6 +99,13 @@ export function classifyCdpConnectionError(error) {
   }
   if (failedWhileFetchingWebsocket && (message.includes("ENOTFOUND") || message.includes("EAI_AGAIN"))) {
     return "websocket_endpoint_fetch_failed_host_resolution_failed";
+  }
+  if (failedWhileFetchingWebsocket && (
+    message.includes("socket hang up")
+    || message.includes("Internal Server Error")
+    || message.includes("Remote end closed connection without response")
+  )) {
+    return "websocket_endpoint_fetch_failed_transport_closed";
   }
   if (failedWhileFetchingWebsocket) {
     return "websocket_endpoint_fetch_failed";
@@ -142,10 +157,13 @@ export async function connectOverCdpWithFallback(playwrightChromium, rawUrl, log
   const finalErrorType = classifyCdpConnectionError(lastError);
   const finalMessage = String(lastError?.message || "");
   const connectionRefused = finalMessage.includes("ECONNREFUSED");
+  const transportClosed = finalMessage.includes("socket hang up")
+    || finalMessage.includes("Internal Server Error")
+    || finalMessage.includes("Remote end closed connection without response");
   const guidance = requestedHost === "host.docker.internal"
     ? (
-      connectionRefused
-        ? "The host gateway is reachable, but Chrome is not accepting remote connections on that interface. Relaunch Chrome with --remote-debugging-address=0.0.0.0 --remote-debugging-port=9222 --user-data-dir=C:\\chrome-jd-profile, then log in again and retry."
+      (connectionRefused || transportClosed)
+        ? "The host gateway is reachable, but Chrome DevTools is only responding on localhost or is closing non-local CDP connections. Relaunch Chrome with --remote-debugging-address=0.0.0.0 --remote-debugging-port=9222 --user-data-dir=C:\\chrome-jd-profile, then log in again and retry."
         : "Please confirm the public-task-worker container has host.docker.internal mapped to the host gateway and Chrome is running with --remote-debugging-address=0.0.0.0 --remote-debugging-port=9222."
     )
     : "Please confirm the CDP address is reachable and Chrome is running with --remote-debugging-address=0.0.0.0 --remote-debugging-port=9222.";

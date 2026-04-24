@@ -39,6 +39,10 @@ test("classifyCdpConnectionError recognizes common CDP transport failures", () =
     classifyCdpConnectionError(new Error("retrieving websocket url from http://host.docker.internal:9222 connect ENETUNREACH fdc4:f303:9324::254:9222")),
     "websocket_endpoint_fetch_failed_ipv6_unreachable",
   );
+  assert.equal(
+    classifyCdpConnectionError(new Error("retrieving websocket url from http://host.docker.internal:9222 socket hang up")),
+    "websocket_endpoint_fetch_failed_transport_closed",
+  );
 });
 
 test("connectOverCdpWithFallback surfaces actionable guidance for host gateway ECONNREFUSED", async () => {
@@ -53,6 +57,23 @@ test("connectOverCdpWithFallback surfaces actionable guidance for host gateway E
     (error) => {
       assert.match(error.message, /--remote-debugging-address=0\.0\.0\.0/);
       assert.match(error.message, /host gateway is reachable/i);
+      return true;
+    },
+  );
+});
+
+test("connectOverCdpWithFallback treats socket hang up as localhost-only DevTools guidance", async () => {
+  const chromium = {
+    connectOverCDP: async () => {
+      throw new Error("browserType.connectOverCDP: socket hang up\nCall log:\n - <ws preparing> retrieving websocket url from http://host.docker.internal:9222");
+    },
+  };
+
+  await assert.rejects(
+    () => connectOverCdpWithFallback(chromium, "http://host.docker.internal:9222", { log() {}, warn() {} }),
+    (error) => {
+      assert.match(error.message, /localhost/i);
+      assert.match(error.message, /--remote-debugging-address=0\.0\.0\.0/);
       return true;
     },
   );

@@ -54,6 +54,10 @@ class WorkerHandler(BaseHTTPRequestHandler):
                     env[str(key)] = str(value)
 
             resolved_command = [self._normalize_command_part(part, env) for part in command]
+            print(
+                f"[worker] execute cwd={resolved_work_dir} timeout={timeout_seconds}s command={resolved_command}",
+                flush=True,
+            )
 
             try:
                 completed = subprocess.run(
@@ -67,6 +71,10 @@ class WorkerHandler(BaseHTTPRequestHandler):
                     encoding="utf-8",
                     errors="replace",
                 )
+                print(
+                    f"[worker] finished exitCode={completed.returncode} command={resolved_command}",
+                    flush=True,
+                )
                 self._send_json(
                     200,
                     {
@@ -79,6 +87,10 @@ class WorkerHandler(BaseHTTPRequestHandler):
                 output = exc.stdout or ""
                 if exc.stderr:
                     output += exc.stderr
+                print(
+                    f"[worker] timeout after {timeout_seconds}s command={resolved_command}",
+                    flush=True,
+                )
                 self._send_json(
                     200,
                     {

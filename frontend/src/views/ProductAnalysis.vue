@@ -67,32 +67,29 @@
             <el-table-column label="好评率" width="120">
               <template #default="{ row }">
                 <span v-if="row.positive_rate !== null">{{ formatPositiveRate(row.positive_rate) }}</span>
-                <el-tag v-else type="info" size="small">未抓取</el-tag>
+                <el-tag v-else :type="metricFieldTagType(row, 'positive_rate')" size="small">{{ metricFieldPlaceholder(row, 'positive_rate') }}</el-tag>
               </template>
             </el-table-column>
             <el-table-column prop="review_count" label="评论总数" width="120">
               <template #default="{ row }">
                 <span v-if="row.review_count !== null">{{ row.review_count }}</span>
-                <el-tag v-else type="info" size="small">未抓取</el-tag>
+                <el-tag v-else :type="metricFieldTagType(row, 'review_count')" size="small">{{ metricFieldPlaceholder(row, 'review_count') }}</el-tag>
               </template>
             </el-table-column>
             <el-table-column prop="shop_score" label="店铺评分" width="120">
               <template #default="{ row }">
                 <span v-if="row.shop_score !== null">{{ Number(row.shop_score).toFixed(2) }}</span>
-                <el-tag v-else type="info" size="small">未抓取</el-tag>
+                <el-tag v-else :type="metricFieldTagType(row, 'shop_score')" size="small">{{ metricFieldPlaceholder(row, 'shop_score') }}</el-tag>
               </template>
             </el-table-column>
             <el-table-column label="状态" width="120">
               <template #default="{ row }">
-                <el-tag :type="row.crawl_status === 'success' ? 'success' : 'info'" size="small">
-                  {{ row.crawl_status === 'success' ? '已抓取' : '待补充' }}
-                </el-tag>
+                <el-tag :type="metricStatusMeta(row).type" size="small">{{ metricStatusMeta(row).label }}</el-tag>
               </template>
             </el-table-column>
-            <el-table-column label="说明" min-width="220">
+            <el-table-column label="说明" min-width="240">
               <template #default="{ row }">
-                <span v-if="row.source_url">该指标来自京东公开商品评价摘要，用于补充解释商品口碑，不代表平台内部真实点击日志。</span>
-                <span v-else>当前商品尚未建立公网映射，暂不展示补充指标。</span>
+                <span>{{ metricDescription(row) }}</span>
               </template>
             </el-table-column>
           </el-table>
@@ -144,6 +141,15 @@ const metricOnlyWithMetrics = ref(true)
 const metricScope = ref('hot')
 const metricLoading = ref(false)
 
+const normalizeMetricRow = (item) => ({
+  ...item,
+  productLabel: productLabel(item),
+  positive_rate: item.positive_rate ?? null,
+  review_count: item.review_count ?? null,
+  shop_score: item.shop_score ?? null,
+  crawl_status: item.crawl_status || 'pending'
+})
+
 const loadData = async () => {
   try {
     const [buyRes, metricRes, viewRes, categoryRes] = await Promise.all([
@@ -158,14 +164,7 @@ const loadData = async () => {
     const metricPayload = metricRes.data || {}
     metricTotal.value = Number(metricPayload.total || 0)
     metricPageCount.value = Math.max(1, Math.ceil(metricTotal.value / metricPageSize.value))
-    metricRows.value = (metricPayload.rows || []).map(item => ({
-      ...item,
-      productLabel: productLabel(item),
-      positive_rate: item.positive_rate ?? null,
-      review_count: item.review_count ?? null,
-      shop_score: item.shop_score ?? null,
-      crawl_status: item.crawl_status || 'pending'
-    }))
+    metricRows.value = (metricPayload.rows || []).map(normalizeMetricRow)
   } catch (error) {
     console.error('加载数据失败:', error)
   }
@@ -202,14 +201,7 @@ const loadMetricData = async () => {
     const metricPayload = metricRes.data || {}
     metricTotal.value = Number(metricPayload.total || 0)
     metricPageCount.value = Math.max(1, Math.ceil(metricTotal.value / metricPageSize.value))
-    metricRows.value = (metricPayload.rows || []).map(item => ({
-      ...item,
-      productLabel: productLabel(item),
-      positive_rate: item.positive_rate ?? null,
-      review_count: item.review_count ?? null,
-      shop_score: item.shop_score ?? null,
-      crawl_status: item.crawl_status || 'pending'
-    }))
+    metricRows.value = (metricPayload.rows || []).map(normalizeMetricRow)
   } catch (error) {
     console.error('加载满意度指标失败:', error)
   } finally {
@@ -219,9 +211,60 @@ const loadMetricData = async () => {
 
 const productLabel = (item) => {
   if (!item) return ''
-  if (item.brand) return `${item.brand} #${item.item_id}`
+  if (item.verified_title) return item.verified_title
   if (item.product_name) return item.product_name
+  if (item.brand) return `${item.brand} #${item.item_id}`
   return `ID ${item.item_id}`
+}
+
+const hasMetricValue = (value) => value !== null && value !== undefined
+
+const hasAnyMetricValue = (row) => {
+  if (!row) return false
+  return hasMetricValue(row.positive_rate) || hasMetricValue(row.review_count) || hasMetricValue(row.shop_score)
+}
+
+const hasCoreMetricValue = (row) => {
+  if (!row) return false
+  return hasMetricValue(row.positive_rate) || hasMetricValue(row.shop_score)
+}
+
+const hasMapping = (row) => Number(row?.has_mapping || 0) === 1
+
+const metricStatusMeta = (row) => {
+  if (!hasMapping(row)) return { label: '未映射', type: 'info' }
+  if (row.crawl_status === 'success' && hasCoreMetricValue(row)) return { label: '已补充', type: 'success' }
+  if (row.crawl_status === 'success' && hasAnyMetricValue(row)) return { label: '部分补充', type: 'warning' }
+  if (row.crawl_status === 'empty') return { label: '暂无公开值', type: 'info' }
+  return { label: '待补充', type: 'info' }
+}
+
+const metricFieldPlaceholder = (row, field) => {
+  if (!hasMapping(row)) return '未映射'
+  if (row.crawl_status === 'empty') return '暂无公开值'
+  if (row.crawl_status === 'success' && field !== 'review_count' && hasMetricValue(row.review_count)) return '部分补充'
+  if (row.crawl_status === 'success') return '未提供'
+  return '待补充'
+}
+
+const metricFieldTagType = (row, field) => (
+  metricFieldPlaceholder(row, field) === '部分补充' ? 'warning' : 'info'
+)
+
+const metricDescription = (row) => {
+  if (!hasMapping(row)) {
+    return '当前商品尚未建立公网映射，暂不展示补充指标。'
+  }
+  if (row.crawl_status === 'empty') {
+    return '已查询京东公开评价摘要，但当前未返回可用的满意度字段。'
+  }
+  if (row.crawl_status === 'success' && hasCoreMetricValue(row)) {
+    return '该指标来自京东公开商品评价摘要，用于补充解释商品口碑，不代表平台内部真实点击日志。'
+  }
+  if (row.crawl_status === 'success' && hasAnyMetricValue(row)) {
+    return '已采集到部分京东公开评价摘要字段，当前仅展示可用的补充指标。'
+  }
+  return '该指标来自京东公开商品评价摘要，用于补充解释商品口碑，不代表平台内部真实点击日志。'
 }
 
 const categoryLabel = (item) => {
@@ -379,7 +422,7 @@ const initCharts = (buyData, viewData, categoryData) => {
           rotate: 30,
           interval: 0,
           color: theme.textSub,
-          formatter: (val) => val.length > 8 ? `${val.slice(0, 8)}…` : val
+          formatter: (val) => val.length > 8 ? `${val.slice(0, 8)}...` : val
         },
         axisLine: { lineStyle: { color: theme.axisLine } },
         axisTick: { show: false }
@@ -464,6 +507,8 @@ onUnmounted(() => {
     margin-top: 8px;
     display: flex;
     justify-content: flex-end;
+    gap: 12px;
+    align-items: center;
   }
 
   .metric-card :deep(.el-table) {

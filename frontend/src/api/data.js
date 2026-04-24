@@ -69,7 +69,7 @@ export function crawlData(mappingPath, outputDir, fixtureDir) {
 /**
  * 复用当前浏览器搜索页抓取公网指标。
  */
-export function crawlAttachedSearchData(candidatePath, outputPath, cdpUrl = 'http://host.docker.internal:9222') {
+export function crawlAttachedSearchData(candidatePath, outputPath, cdpUrl = 'http://host.docker.internal:9223') {
     return http.post('/data/crawl-attached-search', null, {
         params: { candidatePath, outputPath, cdpUrl }
     })

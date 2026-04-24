@@ -21,11 +21,11 @@ public interface ProductPublicMappingMapper extends BaseMapper<ProductPublicMapp
             "ON DUPLICATE KEY UPDATE " +
             "source_product_id = VALUES(source_product_id), " +
             "source_url = VALUES(source_url), " +
-            "verified_title = VALUES(verified_title), " +
+            "verified_title = COALESCE(NULLIF(VALUES(verified_title), ''), verified_title), " +
             "mapping_confidence = VALUES(mapping_confidence), " +
             "verification_note = VALUES(verification_note), " +
             "evidence_note = VALUES(evidence_note), " +
-            "verified_at = VALUES(verified_at)")
+            "verified_at = COALESCE(VALUES(verified_at), verified_at)")
     int upsert(ProductPublicMapping mapping);
 
     @Select("SELECT COUNT(*) FROM product_public_mapping WHERE item_id = #{itemId} AND source_platform = #{sourcePlatform}")

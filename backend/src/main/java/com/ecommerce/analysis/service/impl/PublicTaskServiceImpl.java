@@ -45,7 +45,7 @@ public class PublicTaskServiceImpl implements PublicTaskService {
     private static final String PUBLIC_TASK_WORKER_URL_ENV = "PUBLIC_TASK_WORKER_URL";
     private static final String PUBLIC_TASK_WORKSPACE_ROOT_ENV = "PUBLIC_TASK_WORKSPACE_ROOT";
     private static final String PUBLIC_TASK_BROWSER_PATH_ENV = "PUBLIC_TASK_BROWSER_PATH";
-    private static final String DEFAULT_PUBLIC_TASK_CDP_URL = "http://host.docker.internal:9222";
+    private static final String DEFAULT_PUBLIC_TASK_CDP_URL = "http://host.docker.internal:9223";
     private static final List<String> PUBLIC_TASK_ENV_KEYS = Arrays.asList(
             PUBLIC_TASK_PYTHON_ENV,
             PUBLIC_TASK_CDP_URL_ENV,
@@ -165,11 +165,13 @@ public class PublicTaskServiceImpl implements PublicTaskService {
                     : resolveWorkspacePath(mappingPath);
             String outputJsonFile = resolvedOutputDir + "/jd_product_public_metrics.json";
             String outputFile = resolvedOutputDir + "/jd_product_public_metrics.csv";
+            clearCancelSignal(resolvedOutputDir);
 
             updateProgress(status, 10D, "开始执行公网满意度采集脚本");
             List<String> crawlArgs = new ArrayList<>(Arrays.asList(
                     "--mapping", resolvedMappingPath,
                     "--output-dir", resolvedOutputDir,
+                    "--cdp-url", resolveDefaultCdpUrl(),
                     "--sleep-seconds", "0"));
             if (!resolvedFixtureDir.isEmpty()) {
                 crawlArgs.add("--fixture-dir");
@@ -609,6 +611,15 @@ public class PublicTaskServiceImpl implements PublicTaskService {
             return null;
         }
         return configured.trim().replaceAll("/+$", "");
+    }
+
+    private void clearCancelSignal(String outputDir) {
+        try {
+            Path signalPath = Paths.get(outputDir, ".cancel_signal");
+            Files.deleteIfExists(signalPath);
+        } catch (IOException e) {
+            log.warn("Failed to clear public task cancel signal under {}", outputDir, e);
+        }
     }
 
     private void assertWorkerHealthy(String workerUrl) throws IOException {

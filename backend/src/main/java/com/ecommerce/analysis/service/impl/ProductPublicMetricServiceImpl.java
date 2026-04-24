@@ -218,7 +218,7 @@ public class ProductPublicMetricServiceImpl implements ProductPublicMetricServic
         Files.createDirectories(outputPath.getParent());
 
         try (BufferedWriter writer = Files.newBufferedWriter(outputPath, StandardCharsets.UTF_8)) {
-            writer.write("item_id,source_platform,source_product_id,source_url,mapping_confidence,verification_note,evidence_note");
+            writer.write("item_id,source_platform,source_product_id,source_url,verified_title,mapping_confidence,verification_note,evidence_note,verified_at");
             writer.newLine();
             for (ProductPublicMapping mapping : mappings) {
                 if (mapping == null || mapping.getItemId() == null) {
@@ -232,11 +232,15 @@ public class ProductPublicMetricServiceImpl implements ProductPublicMetricServic
                 writer.write(",");
                 writer.write(csv(mapping.getSourceUrl()));
                 writer.write(",");
+                writer.write(csv(mapping.getVerifiedTitle()));
+                writer.write(",");
                 writer.write(csv(mapping.getMappingConfidence() == null ? "1.0" : mapping.getMappingConfidence().stripTrailingZeros().toPlainString()));
                 writer.write(",");
                 writer.write(csv(mapping.getVerificationNote()));
                 writer.write(",");
                 writer.write(csv(mapping.getEvidenceNote()));
+                writer.write(",");
+                writer.write(csv(mapping.getVerifiedAt()));
                 writer.newLine();
             }
         }

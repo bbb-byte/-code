@@ -10,10 +10,11 @@ import org.springframework.test.util.ReflectionTestUtils;
 import java.math.BigDecimal;
 import java.util.Arrays;
 import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -48,10 +49,10 @@ class UserBehaviorServiceImplTest {
         page.setRows(Arrays.asList(first, second));
 
         when(analysisCacheService.getOrLoad(
-                org.mockito.ArgumentMatchers.eq("analysis:hot-products:public-metrics:jd:hot:false:1:5"),
-                org.mockito.ArgumentMatchers.eq(10L),
-                org.mockito.ArgumentMatchers.eq(HotProductsPublicMetricsPageVO.class),
-                org.mockito.ArgumentMatchers.any()))
+                eq("analysis:hot-products:public-metrics:jd:hot:false:1:5"),
+                eq(10L),
+                eq(HotProductsPublicMetricsPageVO.class),
+                any()))
                 .thenReturn(page);
 
         UserBehaviorServiceImpl service = new UserBehaviorServiceImpl();
@@ -59,6 +60,7 @@ class UserBehaviorServiceImplTest {
         ReflectionTestUtils.setField(service, "userProfileMapper", userProfileMapper);
         ReflectionTestUtils.setField(service, "productPublicMetricMapper", productPublicMetricMapper);
         ReflectionTestUtils.setField(service, "analysisCacheService", analysisCacheService);
+        ReflectionTestUtils.setField(service, "hotProductsCacheTtlMinutes", 10L);
 
         HotProductsPublicMetricsPageVO result = service.getHotProductsWithPublicMetrics(1, 5, false, "hot");
 
@@ -68,9 +70,9 @@ class UserBehaviorServiceImplTest {
         assertEquals(new BigDecimal("0.9830"), result.getRows().get(0).get("positive_rate"));
         assertEquals(null, result.getRows().get(1).get("source_platform"));
         verify(analysisCacheService).getOrLoad(
-                org.mockito.ArgumentMatchers.eq("analysis:hot-products:public-metrics:jd:hot:false:1:5"),
-                org.mockito.ArgumentMatchers.eq(10L),
-                org.mockito.ArgumentMatchers.eq(HotProductsPublicMetricsPageVO.class),
-                org.mockito.ArgumentMatchers.any());
+                eq("analysis:hot-products:public-metrics:jd:hot:false:1:5"),
+                eq(10L),
+                eq(HotProductsPublicMetricsPageVO.class),
+                any());
     }
 }

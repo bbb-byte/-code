@@ -8,7 +8,7 @@ import re
 import shutil
 import time
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlencode
+from urllib.parse import urlparse, urlencode
 from urllib.request import Request, urlopen
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -78,6 +78,7 @@ class JDPublicSatisfactionCrawler:
         headless: bool = False,
         browser_path: str = "",
         browser_user_data_dir: Optional[Path] = None,
+        cdp_url: str = "",
     ):
         self.timeout = timeout
         self.sleep_seconds = sleep_seconds
@@ -89,6 +90,7 @@ class JDPublicSatisfactionCrawler:
         self.browser: Optional[Chromium] = None
         self.browser_path = browser_path
         self.browser_user_data_dir = browser_user_data_dir
+        self.cdp_url = cdp_url
         self._owns_browser = False
 
     # ------------------------------------------------------------------
@@ -103,6 +105,18 @@ class JDPublicSatisfactionCrawler:
         """
         if self.fixture_dir:
             return
+
+        configured_cdp_address = normalize_cdp_address(self.cdp_url or os.getenv("PUBLIC_TASK_CDP_URL", ""))
+        if configured_cdp_address:
+            try:
+                co = ChromiumOptions()
+                co.set_address(configured_cdp_address)
+                self.browser = Chromium(co)
+                self._owns_browser = False
+                logger.info("已接管外部调试 Chrome：%s", configured_cdp_address)
+                return
+            except Exception as e:
+                logger.warning("连接外部调试 Chrome 失败: %s，继续尝试本地调试 Chrome", e)
 
         is_linux = os.name != "nt"
         auto_headless = is_linux and not bool(os.getenv("DISPLAY") or os.getenv("WAYLAND_DISPLAY"))
@@ -722,6 +736,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--headless", action="store_true", help="无头模式运行（不显示浏览器窗口）")
     parser.add_argument("--browser-path", default="", help="浏览器可执行文件路径")
     parser.add_argument("--browser-user-data-dir", default="", help="Browser user data dir")
+    parser.add_argument("--cdp-url", default="", help="External Chrome DevTools URL, for example http://host.docker.internal:9223")
     return parser
 
 
@@ -739,6 +754,19 @@ def first_non_empty(*values: Optional[str]) -> str:
         if value and str(value).strip():
             return str(value).strip()
     return ""
+
+
+def normalize_cdp_address(raw_url: str) -> str:
+    text = str(raw_url or "").strip()
+    if not text:
+        return ""
+    with_scheme = text if re.match(r"^[a-z]+://", text, re.I) else f"http://{text}"
+    parsed = urlparse(with_scheme)
+    host = parsed.hostname or ""
+    if not host:
+        return ""
+    port = parsed.port or DEFAULT_CDP_PORT
+    return f"{host}:{port}"
 
 
 def resolve_browser_path(cli_value: str) -> str:
@@ -777,6 +805,7 @@ def main() -> None:
     fixture_dir = resolve_path(base_dir, args.fixture_dir) if args.fixture_dir else None
     browser_path = resolve_browser_path(args.browser_path)
     browser_user_data_dir = resolve_browser_user_data_dir(base_dir, args.browser_user_data_dir)
+    cdp_url = first_non_empty(args.cdp_url, os.getenv("PUBLIC_TASK_CDP_URL"))
 
     crawler = JDPublicSatisfactionCrawler(
         timeout=args.timeout,
@@ -787,6 +816,7 @@ def main() -> None:
         headless=args.headless,
         browser_path=browser_path,
         browser_user_data_dir=browser_user_data_dir,
+        cdp_url=cdp_url,
     )
     rows = crawler.crawl(mapping_path)
 
