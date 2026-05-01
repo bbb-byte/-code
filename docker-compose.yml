@@ -31,7 +31,7 @@ services:
       PUBLIC_TASK_BROWSER_PROFILE_DIR: ${PUBLIC_TASK_BROWSER_PROFILE_DIR:-/workspace/runtime/browser-profile}
       PUBLIC_TASK_WORKER_URL: ${PUBLIC_TASK_WORKER_URL:-http://public-task-worker:8090}
       PUBLIC_TASK_WORKSPACE_ROOT: ${PUBLIC_TASK_WORKSPACE_ROOT:-/workspace}
-      PUBLIC_TASK_CDP_URL: ${PUBLIC_TASK_CDP_URL:-http://host.docker.internal:9222}
+      PUBLIC_TASK_CDP_URL: ${PUBLIC_TASK_CDP_URL:-http://host.docker.internal:9223}
     depends_on:
       - redis
       - public-task-worker
@@ -55,7 +55,7 @@ services:
       PUBLIC_TASK_BROWSER_CHANNEL: ${PUBLIC_TASK_BROWSER_CHANNEL:-chrome}
       PUBLIC_TASK_BROWSER_PROFILE_DIR: ${PUBLIC_TASK_BROWSER_PROFILE_DIR:-/workspace/runtime/browser-profile}
       PUBLIC_TASK_WORKSPACE_ROOT: ${PUBLIC_TASK_WORKSPACE_ROOT:-/workspace}
-      PUBLIC_TASK_CDP_URL: ${PUBLIC_TASK_CDP_URL:-http://host.docker.internal:9222}
+      PUBLIC_TASK_CDP_URL: ${PUBLIC_TASK_CDP_URL:-http://host.docker.internal:9223}
     ports:
       - "8090:8090"
     volumes:

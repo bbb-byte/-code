@@ -1,189 +1,351 @@
 # 电商用户消费行为分析系统
 
-基于 Vue3 + SpringBoot 的电商用户消费行为分析系统，实现 archive 多品类电商行为数据的导入、清洗、分析与可视化展示。
+基于 Vue 3 + Spring Boot 的电商用户消费行为分析系统，支持 archive/Kaggle 电商行为数据导入、清洗、RFM 分析、K-Means 用户分群、可视化展示，并提供京东公开评价摘要作为商品侧满意度补充指标。
 
-## 项目介绍
+## 项目功能
 
-本系统为武汉商学院本科毕业论文项目，旨在通过对电商用户行为数据的分析，帮助企业掌握用户消费偏好、高价值用户特征，实现精准营销与精细化运营。
+- **数据看板**：核心指标、行为分布、热门商品统计。
+- **行为分析**：用户行为趋势、小时活跃度分析。
+- **用户画像**：RFM 模型、K-Means 聚类分群。
+- **商品分析**：热销商品排行、类目分析、公网满意度辅助解释。
+- **转化漏斗**：浏览、加购、收藏、购买转化分析。
+- **数据管理**：archive/Kaggle CSV 导入、统计更新、分析执行。
+- **系统管理**：用户登录、用户管理、JWT 鉴权。
+- **公网任务**：通过独立 `public-task-worker` 执行 Python/Node/Chromium 采集与映射任务。
 
-### 主要功能
-
-- **数据看板**：展示核心指标、行为分布、热门商品等
-- **行为分析**：用户行为趋势、每小时活跃度分析
-- **用户画像**：RFM模型分析、K-Means聚类分群
-- **商品分析**：热销商品排行、类目分析
-- **转化漏斗**：浏览→加购→收藏→购买转化率分析
-- **数据导入**：支持 archive 电商行为数据集导入与统计更新
-- **公网补充指标**：保留 Python 爬虫作为京东公开评价摘要补充采集工具，不作为当前正式分析口径的数据主源
-- **系统管理**：用户管理、数据导入、分析执行
-
-### 技术栈
+## 技术栈
 
 **前端**
+
 - Vue 3 + Vite
-- Element Plus UI
-- ECharts 可视化
+- Element Plus
+- ECharts / vue-echarts
 - Vue Router + Pinia
+- Nginx，Docker 部署时提供静态页面与 API 反向代理
 
 **后端**
-- Spring Boot 2.7.18 (兼容 Java 8)
+
+- Spring Boot 2.7.18
 - MyBatis Plus
 - Spring Security + JWT
 - Redis 缓存
+- Swagger / Springfox
 
-**数据库**
+**数据与任务**
+
 - MySQL 8.0
-
-**部署**
-- Docker + Docker Compose
-- Nginx
+- Redis 7
+- Python 3.11 worker
+- Node.js + Chromium，用于公网任务与浏览器接管
 
 ## 目录结构
 
+```text
+.
+├── backend/                  # Spring Boot 后端
+├── frontend/                 # Vue 3 前端
+├── worker/                   # 公网任务 worker 服务
+├── crawler/                  # Python 爬虫、映射、评分脚本
+├── scripts/                  # CDP relay 等辅助脚本
+├── archive/                  # 本地数据集目录，不纳入 Git
+├── runtime/                  # 运行时目录、浏览器 profile、上传文件
+├── docker-compose.yml        # Docker Compose 编排
+├── .env.example              # 环境变量示例
+├── start-windows.ps1         # Windows 一键启动脚本
+├── start.sh                  # Linux/macOS 一键启动脚本
+└── README.md
 ```
-code/
-├── backend/                 # 后端 SpringBoot 项目
-│   ├── src/main/java/      # Java 源码
-│   ├── src/main/resources/ # 配置文件
-│   └── pom.xml             # Maven 配置
-│
-├── frontend/               # 前端 Vue3 项目
-│   ├── src/               # Vue 源码
-│   └── package.json       # npm 配置
-│
-├── archive/              # 本地 archive 数据集目录（不纳入 Git）
-├── docker-compose.yml     # Docker 编排配置
-└── README.md              # 项目说明
-```
 
-## 快速开始
+## 环境要求
 
-### 环境要求
+推荐使用 Docker Compose 启动。宿主机需要：
 
-- JDK 1.8 (Java 8)
-- Node.js 18+
-- MySQL 8.0
-- Redis 7.0
+- Docker / Docker Desktop
+- MySQL 8.0，并提前启动
+- Git Bash、WSL、Linux shell 或 PowerShell
+
+Windows 一键启动公网任务接管能力时，还需要：
+
+- Google Chrome
+- Node.js 18+，用于启动 `scripts/cdp_relay.mjs`
+
+仅做手动本机开发时，还需要：
+
+- JDK 8+；Docker 镜像当前使用 JDK/JRE 17 构建运行
 - Maven 3.8+
+- Node.js 18+
+- Python 3.11+
+- Redis 7
 
-## 快速开始
+## 快速启动
 
-### 1. 一键启动 (推荐)
+### 1. 准备 MySQL
 
-在项目根目录下运行：
+本项目的 `docker-compose.yml` 不启动 MySQL 容器，后端默认连接宿主机 MySQL。
+
+先创建数据库并执行初始化脚本：
+
 ```bash
-./start.sh
+mysql -u root -p -e "CREATE DATABASE IF NOT EXISTS ecommerce_analysis DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
+mysql -u root -p ecommerce_analysis < backend/src/main/resources/sql/init.sql
 ```
-Windows 可使用：
+
+然后复制环境变量文件：
+
+```bash
+cp .env.example .env
+```
+
+Windows PowerShell：
+
+```powershell
+Copy-Item .env.example .env
+```
+
+按本机 MySQL 修改 `.env`：
+
+```env
+MYSQL_HOST=host.docker.internal
+MYSQL_PORT=3306
+MYSQL_DATABASE=ecommerce_analysis
+MYSQL_USERNAME=root
+MYSQL_PASSWORD=你的MySQL密码
+```
+
+### 2. 一键启动，推荐
+
+Windows：
+
 ```powershell
 .\start-windows.ps1
 ```
+
 或：
+
 ```bat
 start-windows.bat
 ```
 
-这些脚本会自动完成以下操作：
+Linux/macOS：
 
-- 检查 Docker / Docker Desktop 是否可用
-- 若 `.env` 不存在，则从 `.env.example` 自动生成
-- 自动创建 `runtime/browser-profile` 目录
-- 默认执行 `docker compose up -d`，复用已有镜像以加快启动
-- 需要重新构建镜像时，可使用 `./start.sh --build`、`.\start-windows.ps1 -Build` 或 `start-windows.bat --build`
-- 一次性启动 `redis`、`backend`、`public-task-worker`、`frontend`
-- 后端通过 `.env` 中的 `MYSQL_*` 配置连接宿主机 MySQL，不再额外启动 MySQL 容器
-该脚本会自动检查 Docker 环境、启动数据库容器，并在新终端窗口中启动前后端服务。
-
-### 2. 手动启动
-
-#### 数据库初始化
 ```bash
-# 登录 MySQL 并执行初始化脚本
-mysql -u root -p < backend/src/main/resources/sql/init.sql
+./start.sh
 ```
 
-#### 启动后端
+依赖或 Dockerfile 变更后需要重建镜像：
+
+```powershell
+.\start-windows.ps1 -Build
+```
+
+```bash
+./start.sh --build
+```
+
+启动脚本会完成：
+
+- 检查 Docker 是否可用。
+- 如果 `.env` 不存在，则从 `.env.example` 生成。
+- 创建 `runtime/browser-profile` 运行时目录。
+- 启动 `redis`、`backend`、`public-task-worker`、`frontend`。
+- Windows 脚本会额外尝试启动 Chrome CDP 与 `9223` relay，便于 worker 复用宿主机浏览器登录态。
+
+启动后访问：
+
+- 前端页面：`http://localhost`
+- 后端接口：`http://localhost:8080/api`
+- Swagger：`http://localhost:8080/api/swagger-ui.html`
+- Worker 健康检查：`http://localhost:8090/health`
+- Windows CDP relay：`http://host.docker.internal:9223/json/version`
+
+默认账号：
+
+- 管理员：`admin / admin123`
+
+### 3. 停止服务
+
+Windows：
+
+```powershell
+.\stop-windows.ps1
+```
+
+Linux/macOS：
+
+```bash
+./stop.sh
+```
+
+或直接执行：
+
+```bash
+docker compose down --remove-orphans
+```
+
+停止脚本只停止项目容器、Windows CDP relay 和脚本启动的 Chrome CDP，不会停止宿主机 MySQL。
+
+## 手动开发启动
+
+手动启动适合开发调试。此模式下需要自己启动 MySQL 和 Redis。
+
+启动 Redis：
+
+```bash
+docker run --name ecommerce-redis-dev -p 6379:6379 -d redis:7-alpine
+```
+
+启动后端：
+
 ```bash
 cd backend
 mvn spring-boot:run
 ```
 
-#### 启动前端
+启动前端：
+
 ```bash
 cd frontend
 npm install
 npm run dev
 ```
 
-前端启动后访问: http://localhost:3000
+本机开发访问地址：
 
-### 4. 默认账号
+- 前端：`http://localhost:3000`
+- 后端：`http://localhost:8080/api`
 
-- 管理员: admin / admin123
+如果本机 MySQL 用户、密码或端口不是默认值，可通过环境变量覆盖：
 
-## Docker 部署
+```powershell
+$env:SPRING_DATASOURCE_URL="jdbc:mysql://localhost:3306/ecommerce_analysis?useUnicode=true&characterEncoding=utf-8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true&rewriteBatchedStatements=true"
+$env:SPRING_DATASOURCE_USERNAME="root"
+$env:SPRING_DATASOURCE_PASSWORD="你的MySQL密码"
+```
+
+## Docker 服务说明
+
+`docker-compose.yml` 当前包含：
+
+- `redis`：缓存服务，端口 `6379`。
+- `backend`：Spring Boot 后端，端口 `8080`，挂载项目根目录到 `/workspace`。
+- `public-task-worker`：公网任务执行服务，端口 `8090`，负责 Python / Node / Chromium 任务。
+- `frontend`：Nginx 前端服务，端口 `80`，代理 `/api` 到后端。
+- 宿主机 MySQL：不由 Compose 管理，容器通过 `host.docker.internal` 访问。
+
+常用命令：
 
 ```bash
-# 快速启动所有服务（默认不重建）
-docker compose up -d
-
-# 依赖或 Dockerfile 变更后重新构建
+docker compose ps
+docker compose logs -f backend
+docker compose logs -f public-task-worker
 docker compose up -d --build
-
-# 查看日志
-docker compose logs -f
-
-# 停止服务
 docker compose down --remove-orphans
 ```
 
-## 数据导入
+## 公网任务与浏览器接管
 
-1. 登录系统（管理员账号）
-2. 进入 "数据管理" 页面
-3. 输入 archive CSV 文件路径（如 `archive/2019-Nov-demo.csv`），点击 "开始导入"
-4. 导入完成后，点击 "执行分析" 计算 RFM 值和聚类
+公网满意度数据只作为商品侧补充指标，不是系统正式用户行为数据源。正式分析仍以 `archive` / Kaggle 行为数据为主。
 
-## 公网满意度补充数据
+相关环境变量：
 
-- `archive` 数据集仍然是本系统唯一的正式用户行为与分群主数据源。
-- Python 爬虫在当前版本只负责补充 `JD public product satisfaction data（京东公开评价摘要）` 这一类商品侧公开指标，例如：
-  - `positive_rate`
-  - `review_count`
-  - `shop_score`
-- 这些指标只用于辅助解释 RFM 分群和商品表现，例如分析高价值流失用户是否集中购买了低口碑商品。
-- 该补充模块不是平台内部点击日志，也不用于重建真实的用户级浏览→加购→购买链路。
+- `PUBLIC_TASK_PYTHON`：worker 执行 Python 脚本使用的解释器。
+- `PUBLIC_TASK_BROWSER_PATH`：Chromium/Chrome 可执行文件路径；Docker worker 默认使用 `/usr/bin/chromium`。
+- `PUBLIC_TASK_BROWSER_CHANNEL`：Playwright 浏览器通道，例如 `chrome`。
+- `PUBLIC_TASK_BROWSER_PROFILE_DIR`：浏览器 profile 目录，Docker 推荐 `/workspace/runtime/browser-profile`。
+- `PUBLIC_TASK_WORKER_URL`：后端访问 worker 的地址，Docker 内部为 `http://public-task-worker:8090`。
+- `PUBLIC_TASK_WORKSPACE_ROOT`：容器内工作区根目录，默认 `/workspace`。
+- `PUBLIC_TASK_CDP_URL`：宿主机浏览器 CDP 地址，Windows 脚本默认配置为 `http://host.docker.internal:9223`。
 
-管理员接口约定：
-- `POST /api/data/crawl`：根据已存在的公网映射抓取商品满意度指标；支持传 `mappingPath/outputDir/fixtureDir`
-- `POST /api/data/public-mapping/recall`：生成公网候选商品；支持直接传商品快照，也支持传原始 Kaggle/archive 行为文件并由后端自动生成商品快照
+Windows 推荐直接运行 `.\start-windows.ps1`。脚本会：
 
-推荐操作步骤：
-1. 在“数据导入”中先导入 `archive` / Kaggle 行为文件，完成主分析数据入库
-2. 在“公网映射工作台”中填写原始行为文件路径，例如 `archive/2019-Nov-demo.csv`
-3. 点击“召回候选商品”，系统会自动生成商品快照并输出候选商品文件
-   说明：召回完成后，工作台会自动切换到新生成的商品快照/候选文件；下一步应立即执行“计算映射分数”
-4. 点击“计算映射分数”，生成评分结果预览
-5. 在评分结果预览中检查候选商品，必要时点“编辑”补充标题、置信度、核验说明和证据备注
-6. 勾选通过的候选，点击“一键确认入库”，将结果写入 `product_public_mapping`
-7. 最后回到“公网满意度补充”，点击“采集公网满意度指标”，按已确认映射抓取京东公开评价摘要
+1. 使用 `C:\chrome-jd-profile` 启动一个带远程调试端口的 Chrome。
+2. 启动 `scripts/cdp_relay.mjs`，监听 `0.0.0.0:9223` 并转发到本机 Chrome 的 `127.0.0.1:9222`。
+3. 将 `.env` 中的 `PUBLIC_TASK_CDP_URL` 设置为 `http://host.docker.internal:9223`。
+
+如果需要手动启动 Chrome，可使用：
+
+```powershell
+chrome.exe --remote-debugging-address=0.0.0.0 --remote-debugging-port=9222 --user-data-dir=C:\chrome-jd-profile
+```
+
+如果 Chrome 只监听 `127.0.0.1:9222`，Docker 容器无法直接访问，此时需要同时启动 relay：
+
+```bat
+start-cdp-relay.bat
+```
+
+公网任务常见检查：
+
+```bash
+docker compose logs -f public-task-worker
+curl http://localhost:8090/health
+```
+
+## 数据导入流程
+
+1. 登录系统。
+2. 进入“数据管理”页面。
+3. 输入 archive/Kaggle CSV 文件路径，例如 `archive/2019-Nov-demo.csv`。
+4. 点击“开始导入”。
+5. 导入完成后点击“执行分析”，计算 RFM、聚类和统计指标。
+
+公网满意度补充流程：
+
+1. 先导入 archive/Kaggle 行为文件，完成主分析数据入库。
+2. 在“公网映射工作台”填写原始行为文件路径。
+3. 点击“召回候选商品”，生成商品快照与候选商品。
+4. 点击“计算映射分数”，生成评分结果预览。
+5. 检查候选商品，必要时编辑标题、置信度、核验说明和证据备注。
+6. 勾选通过候选，点击“一键确认入库”，写入 `product_public_mapping`。
+7. 回到“公网满意度补充”，点击“采集公网满意度指标”。
+
+## 常见问题
+
+**后端连不上数据库**
+
+- 确认宿主机 MySQL 已启动。
+- 确认 `.env` 中 `MYSQL_*` 配置正确。
+- Docker 场景通常使用 `MYSQL_HOST=host.docker.internal`。
+
+**后端提示 worker 不可达**
+
+- 执行 `docker compose ps`，确认 `public-task-worker` 正在运行。
+- 确认 `.env` 中 `PUBLIC_TASK_WORKER_URL=http://public-task-worker:8090`。
+- 查看 `docker compose logs -f public-task-worker`。
+
+**公网任务浏览器启动失败**
+
+- Docker worker 默认需要 Chromium，重建镜像可重新安装依赖：`docker compose up -d --build`。
+- Windows 复用宿主机登录态时，确认 `http://host.docker.internal:9223/json/version` 可访问。
+- 登录京东等网站时，需要先在脚本打开的 Chrome 窗口完成登录。
+
+**改了依赖但启动后没生效**
+
+- 前端依赖、Python 依赖、Dockerfile 修改后，使用 `--build` 或 `-Build` 重新构建。
 
 ## 核心算法
 
 ### RFM 模型
 
-- **R (Recency)**: 最近一次消费距今天数
-- **F (Frequency)**: 消费频率（购买次数）
-- **M (Monetary)**: 消费金额总和
+- **R (Recency)**：最近一次消费距当前基准日期的天数。
+- **F (Frequency)**：消费频率，通常为购买次数。
+- **M (Monetary)**：消费金额总和。
 
 ### K-Means 聚类
 
-基于用户 RFM 特征，使用 K-Means++ 算法进行用户分群，默认分为 5 类：
+基于用户 RFM 特征使用 K-Means++ 进行分群，默认分为：
+
 - 高价值用户
 - 潜力用户
 - 新用户
 - 沉睡用户
 - 流失用户
+
+## 答辩说明材料
+
+- [工程质量与复现性答辩说明](docs/DEFENSE_ENGINEERING_NOTES.md)
+- [数据字典](docs/DATA_DICTIONARY.md)
+- [接口与测试数据说明](docs/API_AND_TEST_DATA.md)
 
 ## 作者
 
@@ -195,130 +357,3 @@ docker compose down --remove-orphans
 ## License
 
 MIT License
-
-## Start / Stop Notes
-
-- Start scripts now use Docker Compose to start `redis`, `backend`, `public-task-worker`, and `frontend`.
-- Start scripts default to `docker compose up -d` for faster restarts. Use the build flag only when dependencies or Dockerfiles change.
-- Local MySQL is not started by Docker. Please make sure your host MySQL service is already running before executing `start.sh`, `start-windows.ps1`, or `start-windows.bat`.
-- Stop scripts now use `docker compose down --remove-orphans` to stop the project containers cleanly.
-- Local MySQL is not managed by the stop scripts and will remain running.
-- Current access addresses after startup:
-  Frontend: `http://localhost`
-  Backend: `http://localhost:8080/api`
-  Swagger: `http://localhost:8080/api/swagger-ui.html`
-  Worker health: `http://localhost:8090/health`
-
-## 公网任务运行配置
-
-为避免把作者本机路径硬编码进项目，公网任务相关脚本现已统一改为通过环境变量读取运行配置，并支持通过独立 `worker` 容器执行。
-
-### 1. 配置环境变量
-
-先将 `.env.example` 复制为 `.env`，再按当前机器或容器环境修改配置项。
-
-支持的环境变量：
-
-- `PUBLIC_TASK_PYTHON`：后端或 `worker` 执行公网任务时使用的 Python 解释器
-- `PUBLIC_TASK_BROWSER_PATH`：浏览器可执行文件的显式路径
-- `PUBLIC_TASK_BROWSER_CHANNEL`：Playwright 自动发现浏览器时使用的通道，例如 `chrome`
-- `PUBLIC_TASK_BROWSER_PROFILE_DIR`：浏览器 Profile 目录，用于复用登录态和缓存
-- `PUBLIC_TASK_WORKER_URL`：后端转发公网任务到 `worker` 的地址
-- `PUBLIC_TASK_WORKSPACE_ROOT`：容器内工作区根目录
-
-推荐配置示例：
-
-```bash
-# Linux / Docker
-PUBLIC_TASK_PYTHON=/usr/bin/python3
-PUBLIC_TASK_BROWSER_PATH=/usr/bin/chromium
-PUBLIC_TASK_BROWSER_CHANNEL=chrome
-PUBLIC_TASK_BROWSER_PROFILE_DIR=/workspace/runtime/browser-profile
-PUBLIC_TASK_WORKER_URL=http://public-task-worker:8090
-PUBLIC_TASK_WORKSPACE_ROOT=/workspace
-```
-
-```powershell
-# Windows 本机开发
-$env:PUBLIC_TASK_PYTHON="C:/Python311/python.exe"
-$env:PUBLIC_TASK_BROWSER_PATH="C:/Program Files/Google/Chrome/Application/chrome.exe"
-$env:PUBLIC_TASK_BROWSER_CHANNEL="chrome"
-$env:PUBLIC_TASK_BROWSER_PROFILE_DIR="./runtime/browser-profile"
-```
-
-### 2. Docker 启动方式
-
-执行以下命令启动：
-
-```bash
-docker-compose up -d --build
-```
-
-查看关键服务状态：
-
-```bash
-docker-compose ps
-docker-compose logs -f backend
-docker-compose logs -f public-task-worker
-```
-
-### 3. 当前容器分工
-
-- `backend`：负责接口、任务编排、结果入库
-- `public-task-worker`：负责执行 Python / Node / Chromium 公网任务脚本
-- `redis`：负责缓存
-- 宿主机 MySQL：负责数据库，容器通过 `host.docker.internal` 和 `.env` 中的 `MYSQL_*` 配置连接
-- `frontend`：负责前端页面服务
-
-### 4. 当前 Docker 编排说明
-
-- `docker-compose.yml` 已将 `PUBLIC_TASK_*` 环境变量透传到 `backend`
-- `backend` 挂载整个项目目录到 `/workspace`，用于统一访问脚本、输入输出目录和运行时文件
-- `public-task-worker` 镜像在构建阶段会安装 `crawler/requirements.txt` 与 `frontend/package.json` 中的任务依赖
-- `public-task-worker` 运行阶段挂载 `crawler/`、`frontend/scripts/`、`runtime/browser-profile/`
-- 后端通过 `PUBLIC_TASK_WORKER_URL` 将公网任务转发给 `worker` 执行
-
-这样处理后，公网任务不再依赖 `backend` 镜像内必须安装 Python、Node、Chromium，而是交由独立 `worker` 容器执行，更便于跨机器复现与后续扩展。
-
-### 5. 运行后如何验证
-
-可以按下面顺序检查：
-
-1. 执行 `docker-compose ps`，确认 `backend`、`public-task-worker`、`redis` 均为运行状态。
-2. 确认宿主机 MySQL 服务已启动，并且 `.env` 中的 `MYSQL_HOST`、`MYSQL_PORT`、`MYSQL_DATABASE`、`MYSQL_USERNAME`、`MYSQL_PASSWORD` 配置正确。
-3. 查看 `public-task-worker` 日志，确认服务正常启动，没有 Python、npm、Chromium 缺失报错。
-4. 访问后端接口或页面，触发一次公网任务。
-5. 检查 `crawler/output/` 是否生成结果文件，检查 `runtime/browser-profile/` 是否生成浏览器状态目录。
-
-### 6. 常见问题排查
-
-- 若后端提示无法连接 `worker`，先检查 `PUBLIC_TASK_WORKER_URL` 是否与 `docker-compose` 中服务名一致。
-- 若 `worker` 内浏览器启动失败，优先检查 `PUBLIC_TASK_BROWSER_PATH` 是否正确，或暂时留空改用自动发现。
-- 若脚本报依赖缺失，需要重新执行 `docker-compose up -d --build`，确保 `worker` 镜像已重新构建。
-- 若输出路径不一致，重点检查 `PUBLIC_TASK_WORKSPACE_ROOT`、挂载目录和传入的相对路径是否都基于 `/workspace`。
-
-### 7. 健康检查与报错改进
-
-当前后端在派发公网任务前，会先访问 `worker` 的 `/health` 接口做可用性检查。
-
-如果出现异常，通常会直接区分为以下几类：
-
-- `worker` 不可达：通常表示 `public-task-worker` 容器未启动，或 `PUBLIC_TASK_WORKER_URL` 配置错误
-- Python 解释器不可用：通常表示 `PUBLIC_TASK_PYTHON` 配错，或当前运行环境未安装 Python
-- 浏览器启动失败：通常表示 `PUBLIC_TASK_BROWSER_PATH` 不正确，或容器内浏览器依赖未就绪
-- 脚本执行超时：后端会明确提示超时时间和对应命令，便于定位是网络、页面加载还是风控问题
-
-### 8. 答辩说明材料
-
-如需说明“工程质量与复现性”改造思路，可参考：
-
-- [工程质量与复现性答辩说明](D:/桌面/论文/code/-code/docs/DEFENSE_ENGINEERING_NOTES.md)
-# 宿主机登录 Chrome（供 Docker worker 通过 CDP 接管）
-
-在 Windows 宿主机上启动已登录的 Chrome 时，推荐使用：
-
-```powershell
-chrome.exe --remote-debugging-address=0.0.0.0 --remote-debugging-port=9222 --user-data-dir=C:\chrome-jd-profile
-```
-
-如果只写 `--remote-debugging-port=9222`，Chrome 往往只监听 `127.0.0.1`，`public-task-worker` 容器通过 `host.docker.internal` 访问时会看到 `ECONNREFUSED 192.168.65.254:9222` 一类错误。
