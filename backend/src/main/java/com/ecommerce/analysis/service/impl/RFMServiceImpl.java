@@ -8,7 +8,7 @@ import com.ecommerce.analysis.mapper.UserProfileMapper;
 import com.ecommerce.analysis.service.RFMService;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.math3.ml.clustering.CentroidCluster;
-import org.apache.commons.math3.ml.clustering.DoublePoint;
+import org.apache.commons.math3.ml.clustering.Clusterable;
 import org.apache.commons.math3.ml.clustering.KMeansPlusPlusClusterer;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
@@ -21,7 +21,6 @@ import java.time.LocalDateTime;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Collections;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -140,7 +139,7 @@ public class RFMServiceImpl implements RFMService {
             if (totalViews > 0) {
                 BigDecimal conversionRate = BigDecimal.valueOf(totalBuys)
                         .divide(BigDecimal.valueOf(totalViews), 4, RoundingMode.HALF_UP);
-                profile.setConversionRate(conversionRate);
+                profile.setConversionRate(conversionRate.min(BigDecimal.ONE));
             } else {
                 profile.setConversionRate(BigDecimal.ZERO);
             }
@@ -280,8 +279,7 @@ public class RFMServiceImpl implements RFMService {
             return;
         }
 
-        List<DoublePoint> points = new ArrayList<>();
-        Map<DoublePoint, Long> pointUserMap = new HashMap<>();
+        List<UserClusterPoint> points = new ArrayList<>();
 
         for (UserProfile profile : profilesWithBuys) {
             // 聚类特征使用离散化后的 R/F/M 评分，避免金额量纲过大压制其他维度。
@@ -290,29 +288,17 @@ public class RFMServiceImpl implements RFMService {
                     profile.getFScore() != null ? profile.getFScore() : 1,
                     profile.getMScore() != null ? profile.getMScore() : 1
             };
-            DoublePoint point = new DoublePoint(values);
-            points.add(point);
-            pointUserMap.put(point, profile.getUserId());
+            points.add(new UserClusterPoint(profile, values));
         }
 
-        KMeansPlusPlusClusterer<DoublePoint> clusterer = new KMeansPlusPlusClusterer<>(k, 1000);
-        List<CentroidCluster<DoublePoint>> clusters = clusterer.cluster(points);
+        KMeansPlusPlusClusterer<UserClusterPoint> clusterer = new KMeansPlusPlusClusterer<>(k, 1000);
+        List<CentroidCluster<UserClusterPoint>> clusters = clusterer.cluster(points);
 
-        Map<Long, Integer> userClusterMap = new HashMap<>();
         for (int i = 0; i < clusters.size(); i++) {
-            CentroidCluster<DoublePoint> cluster = clusters.get(i);
-            for (DoublePoint point : cluster.getPoints()) {
-                Long userId = pointUserMap.get(point);
-                if (userId != null) {
-                    userClusterMap.put(userId, i);
-                }
-            }
-        }
-
-        for (UserProfile profile : profilesWithBuys) {
-            Integer clusterId = userClusterMap.get(profile.getUserId());
-            if (clusterId != null) {
-                profile.setClusterId(clusterId);
+            CentroidCluster<UserClusterPoint> cluster = clusters.get(i);
+            for (UserClusterPoint point : cluster.getPoints()) {
+                UserProfile profile = point.getProfile();
+                profile.setClusterId(i);
                 userProfileMapper.updateById(profile);
             }
         }
@@ -453,5 +439,27 @@ public class RFMServiceImpl implements RFMService {
             return 4;
         }
         return 5;
+    }
+
+    /**
+     * Keeps the owning user profile attached to a cluster point, even when many users share one R/F/M tuple.
+     */
+    private static class UserClusterPoint implements Clusterable {
+        private final UserProfile profile;
+        private final double[] point;
+
+        UserClusterPoint(UserProfile profile, double[] point) {
+            this.profile = profile;
+            this.point = point;
+        }
+
+        UserProfile getProfile() {
+            return profile;
+        }
+
+        @Override
+        public double[] getPoint() {
+            return point;
+        }
     }
 }
