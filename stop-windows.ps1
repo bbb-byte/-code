@@ -84,7 +84,7 @@ try {
     Stop-MatchingProcess -Name 'chrome.exe' -CommandLinePattern "*--user-data-dir=$HostChromeProfileDir*" -Label 'Chrome CDP'
 
     Write-Step "`n[4/4] Notes" Green
-    Write-Step "Local MySQL service is not managed by this script and was left untouched." Yellow
+    Write-Step "Compose-managed MySQL is stopped with the project. Data remains in the mysql_data Docker volume." Yellow
 
     Write-Step "`n==============================================" Yellow
     Write-Step "Stop completed." Green

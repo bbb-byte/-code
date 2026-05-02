@@ -12,11 +12,6 @@ if %errorlevel%==0 (
 
 echo Node.js not found, falling back to Python relay...
 
-if exist "C:\Users\86186\anaconda3\python.exe" (
-  "C:\Users\86186\anaconda3\python.exe" "%PY_SCRIPT%"
-  goto :eof
-)
-
 where py >nul 2>nul
 if %errorlevel%==0 (
   py -3 "%PY_SCRIPT%"

@@ -268,7 +268,43 @@ public class PublicTaskServiceImpl implements PublicTaskService {
                 args.add("--fixture-dir");
                 args.add(toWorkspaceRelative(workDir, resolvedFixtureDir));
             }
-            ScriptExecution scriptExecution = runNodeScript(frontendDir, nodeScriptPath, args.toArray(new String[0]));
+
+            // 在脚本执行期间，用后台线程轮询输出文件行数来更新进度（60% → 95%）
+            final int effectiveMaxProducts = maxProducts > 0 ? maxProducts : 50;
+            final String monitorPath = resolvedOutputPath;
+            final java.util.concurrent.atomic.AtomicBoolean monitorRunning = new java.util.concurrent.atomic.AtomicBoolean(true);
+            Thread progressMonitor = new Thread(() -> {
+                try {
+                    while (monitorRunning.get()) {
+                        Thread.sleep(2000);
+                        if (!monitorRunning.get()) break;
+                        try {
+                            long rows = countDataRows(monitorPath);
+                            if (rows > 0) {
+                                // 按已产出候选行数估算进度，每个商品贡献 topK 行左右
+                                double fraction = Math.min(1.0, (double) rows / (effectiveMaxProducts * topK));
+                                double estimatedProgress = 60D + fraction * 35D;
+                                int done = (int) Math.ceil(rows / (double) Math.max(1, topK));
+                                updateProgress(status, estimatedProgress,
+                                        String.format("召回中：已完成约 %d/%d 个商品", done, effectiveMaxProducts));
+                            }
+                        } catch (Exception ignored) {
+                        }
+                    }
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            });
+            progressMonitor.setDaemon(true);
+            progressMonitor.start();
+
+            ScriptExecution scriptExecution;
+            try {
+                scriptExecution = runNodeScript(frontendDir, nodeScriptPath, args.toArray(new String[0]));
+            } finally {
+                monitorRunning.set(false);
+                progressMonitor.interrupt();
+            }
             status.setLog(mergeLogs(status.getLog(), scriptExecution.output));
             if (scriptExecution.exitCode != 0) {
                 failTask(status, "候选召回失败: " + scriptExecution.output);

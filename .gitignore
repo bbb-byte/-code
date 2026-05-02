@@ -103,4 +103,5 @@ crawled_user_behavior.csv
 # ===========================
 .claude/
 .omx/
+.specify/
 paper-specify/

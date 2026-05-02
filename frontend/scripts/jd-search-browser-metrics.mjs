@@ -21,7 +21,7 @@ function parseArgs(argv) {
     useCurrentPage: false,
     headless: true,
     maxProducts: 3,
-    sleepSeconds: 5,
+    sleepSeconds: 2,
   };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
@@ -131,14 +131,11 @@ function writeCsv(filePath, rows) {
   fs.writeFileSync(filePath, content, "utf8");
 }
 
-async function collectOne(page, row, sleepSeconds) {
-  const keyword = row.search_keyword || row.public_title || row.source_product_id;
-  await searchKeywordLikeHuman(page, keyword, console);
-  await page.waitForTimeout(Math.max(1000, sleepSeconds * 1000));
-  await humanizeSearchResultsPage(page);
-  await page.waitForTimeout(900);
-  const pageHtml = await page.content();
-
+/**
+ * 从当前搜索结果页提取指定 SKU 的满意度指标（不触发新的搜索）。
+ * 可被多个共享相同关键词的候选行复用，避免重复搜索。
+ */
+async function extractSkuMetrics(page, row, keyword) {
   const extracted = await page.evaluate((sourceProductId) => {
     const parseHrefValue = (href, key) => {
       if (!href) return "";
@@ -149,34 +146,30 @@ async function collectOne(page, row, sleepSeconds) {
       for (const pattern of patterns) {
         const match = href.match(pattern);
         if (match && match[1]) {
-          try {
-            return decodeURIComponent(match[1]);
-          } catch {
-            return match[1];
-          }
+          try { return decodeURIComponent(match[1]); } catch { return match[1]; }
         }
       }
       return "";
     };
 
-    const skuSelector = [
-      `.plugin_goodsCardWrapper[data-sku="${sourceProductId}"]`,
-      `li.gl-item[data-sku="${sourceProductId}"]`,
-      `[data-sku="${sourceProductId}"]`,
-    ].join(",");
-
-    const allSkuNodes = Array.from(document.querySelectorAll(".plugin_goodsCardWrapper[data-sku], li.gl-item[data-sku], [data-sku]"));
+    const allSkuNodes = Array.from(document.querySelectorAll(
+      ".plugin_goodsCardWrapper[data-sku], li.gl-item[data-sku], [data-sku]",
+    ));
     const visibleSkus = allSkuNodes
       .map((node) => node.getAttribute("data-sku") || "")
       .filter(Boolean)
       .slice(0, 20);
-
     const visibleProductLinks = Array.from(document.querySelectorAll('a[href*="item.jd.com/"]'))
       .map((node) => node.getAttribute("href") || node.href || "")
       .filter(Boolean)
       .slice(0, 20);
 
-    const node = document.querySelector(skuSelector);
+    const node = document.querySelector([
+      `.plugin_goodsCardWrapper[data-sku="${sourceProductId}"]`,
+      `li.gl-item[data-sku="${sourceProductId}"]`,
+      `[data-sku="${sourceProductId}"]`,
+    ].join(","));
+
     if (!node) {
       return {
         found: false,
@@ -209,7 +202,7 @@ async function collectOne(page, row, sleepSeconds) {
     };
   }, row.source_product_id);
 
-  const result = {
+  return {
     item_id: row.item_id,
     source_platform: row.source_platform || "jd",
     source_product_id: row.source_product_id,
@@ -233,95 +226,6 @@ async function collectOne(page, row, sleepSeconds) {
       visible_product_links: extracted.visibleProductLinks || [],
     }),
     crawled_at: new Date().toISOString().replace(/\.\d{3}Z$/, "Z"),
-    pageHtml,
-  };
-  return result;
-}
-
-async function collectFromCurrentPage(page, row) {
-  const pageHtml = await page.content();
-  const extracted = await page.evaluate((sourceProductId) => {
-    const parseHrefValue = (href, key) => {
-      if (!href) return "";
-      const patterns = [
-        new RegExp(`[?&]${key}=([^&]+)`, "i"),
-        new RegExp(`${key}%3D([^&]+)`, "i"),
-      ];
-      for (const pattern of patterns) {
-        const match = href.match(pattern);
-        if (match && match[1]) {
-          try {
-            return decodeURIComponent(match[1]);
-          } catch {
-            return match[1];
-          }
-        }
-      }
-      return "";
-    };
-
-    const allSkuNodes = Array.from(document.querySelectorAll(".plugin_goodsCardWrapper[data-sku], li.gl-item[data-sku], [data-sku]"));
-    const visibleSkus = allSkuNodes
-      .map((node) => node.getAttribute("data-sku") || "")
-      .filter(Boolean)
-      .slice(0, 20);
-
-    const node = document.querySelector(
-      `.plugin_goodsCardWrapper[data-sku="${sourceProductId}"], li.gl-item[data-sku="${sourceProductId}"], [data-sku="${sourceProductId}"]`,
-    );
-    if (!node) {
-      return {
-        found: false,
-        title: document.title,
-        href: location.href,
-        htmlLength: document.documentElement.outerHTML.length,
-        visibleSkus,
-      };
-    }
-
-    const cardRoot = node.closest(".plugin_goodsCardWrapper, li.gl-item, [data-sku]") || node;
-    const cardHtml = cardRoot.outerHTML || "";
-    const chatLink = cardRoot.querySelector('a[href*="chat.jd.com/index.action"]');
-    const href = chatLink?.getAttribute("href") || chatLink?.href || "";
-    const ratingTextMatch = cardHtml.match(/好评率[：:\s]*[0-9]+(?:\.[0-9]+)?%/i);
-
-    return {
-      found: true,
-      title: document.title,
-      href: location.href,
-      metricHref: href,
-      htmlLength: cardHtml.length,
-      visibleSkus,
-      positiveRate: parseHrefValue(href, "evaluationRate"),
-      reviewCount: parseHrefValue(href, "commentNum"),
-      shopScore: parseHrefValue(href, "score"),
-      ratingText: ratingTextMatch ? ratingTextMatch[0] : "",
-    };
-  }, row.source_product_id);
-
-  return {
-    item_id: row.item_id,
-    source_platform: row.source_platform || "jd",
-    source_product_id: row.source_product_id,
-    source_url: row.source_url,
-    positive_rate: extracted.found ? normalizePercent(extracted.positiveRate) : "",
-    review_count: extracted.found ? normalizeCount(extracted.reviewCount) : "",
-    shop_score: extracted.found ? (extracted.shopScore || "") : "",
-    rating_text: extracted.found ? (extracted.ratingText || "") : "",
-    crawl_status: extracted.found && (extracted.positiveRate || extracted.reviewCount || extracted.shopScore || extracted.ratingText)
-      ? "success"
-      : (extracted.found ? "empty" : "not_found"),
-    raw_payload: JSON.stringify({
-      extracted_from: "browser_current_search_page",
-      found: extracted.found,
-      title: extracted.title || "",
-      href: extracted.href || "",
-      metric_href: extracted.metricHref || "",
-      html_length: extracted.htmlLength || 0,
-      visible_skus: extracted.visibleSkus || [],
-    }),
-    crawled_at: new Date().toISOString().replace(/\.\d{3}Z$/, "Z"),
-    pageHtml,
   };
 }
 
@@ -336,7 +240,8 @@ async function main() {
     throw new Error("--candidates is required.");
   }
 
-  const rows = parseCsv(fs.readFileSync(candidatesPath, "utf8")).slice(0, args.maxProducts > 0 ? args.maxProducts : undefined);
+  const rows = parseCsv(fs.readFileSync(candidatesPath, "utf8"))
+    .slice(0, args.maxProducts > 0 ? args.maxProducts : undefined);
   fs.mkdirSync(path.dirname(outputPath), { recursive: true });
   fs.mkdirSync(userDataDir, { recursive: true });
   fs.mkdirSync(debugDir, { recursive: true });
@@ -344,14 +249,18 @@ async function main() {
   let browser = null;
   let context = null;
   let page = null;
+
   if (args.cdpUrl) {
     const cdpConnection = await connectOverCdpWithFallback(chromium, args.cdpUrl, console);
     browser = cdpConnection.browser;
     const contexts = browser.contexts();
-    const pages = contexts.flatMap((ctx) => ctx.pages());
-    page = pages.find((p) => (p.url() || "").includes("search.jd.com/Search")) || pages[0];
+    const allPages = contexts.flatMap((ctx) => ctx.pages());
+    // 优先选择 JD 页面；其次选任意非 chrome:// 内部页，避免拿到 omnibox 弹窗
+    page = allPages.find((p) => (p.url() || "").includes("jd.com"))
+      || allPages.find((p) => !(p.url() || "").startsWith("chrome://"))
+      || null;
     if (!page) {
-      throw new Error("No browser page found from CDP connection.");
+      throw new Error("No navigable browser page found from CDP connection.");
     }
     console.log(`Connected to CDP via ${cdpConnection.connectedUrl}. Current page: ${page.url()}`);
   } else {
@@ -364,26 +273,61 @@ async function main() {
     });
     page = context.pages()[0] ?? await context.newPage();
   }
+
   const resultRows = [];
 
   try {
-    for (const row of rows) {
-      const result = args.useCurrentPage
-        ? await collectFromCurrentPage(page, row)
-        : await collectOne(page, row, args.sleepSeconds);
-      const debugPath = path.join(debugDir, `jd_search_metrics_${row.item_id}_${row.source_product_id}.html`);
-      fs.writeFileSync(debugPath, result.pageHtml, "utf8");
-      delete result.pageHtml;
-      resultRows.push(result);
-      console.log(JSON.stringify({
-        item_id: result.item_id,
-        source_product_id: result.source_product_id,
-        crawl_status: result.crawl_status,
-        positive_rate: result.positive_rate,
-        review_count: result.review_count,
-        shop_score: result.shop_score,
-        debug_path: debugPath,
-      }));
+    if (args.useCurrentPage) {
+      // 附着模式：直接从当前页面提取，不触发新搜索
+      for (const row of rows) {
+        const keyword = row.search_keyword || row.public_title || row.source_product_id;
+        const result = await extractSkuMetrics(page, row, keyword);
+        resultRows.push(result);
+        console.log(JSON.stringify({
+          item_id: result.item_id,
+          source_product_id: result.source_product_id,
+          crawl_status: result.crawl_status,
+          positive_rate: result.positive_rate,
+          review_count: result.review_count,
+          shop_score: result.shop_score,
+        }));
+      }
+    } else {
+      // 搜索模式：按 search_keyword 分组，每个关键词只搜一次，批量提取所有共享该关键词的 SKU
+      const keywordGroups = new Map(); // keyword -> row[]
+      for (const row of rows) {
+        const keyword = row.search_keyword || row.public_title || row.source_product_id;
+        if (!keywordGroups.has(keyword)) keywordGroups.set(keyword, []);
+        keywordGroups.get(keyword).push(row);
+      }
+
+      const totalKeywords = keywordGroups.size;
+      let keywordIndex = 0;
+      for (const [keyword, groupRows] of keywordGroups) {
+        keywordIndex += 1;
+        console.log(`Searching keyword ${keywordIndex}/${totalKeywords}: "${keyword}" (${groupRows.length} SKU(s))`);
+        await searchKeywordLikeHuman(page, keyword, console);
+        // 等待页面稳定，时间比旧版的 sleepSeconds*1000 短一半
+        await page.waitForTimeout(Math.max(500, args.sleepSeconds * 500));
+        await humanizeSearchResultsPage(page);
+        await page.waitForTimeout(400);
+
+        // 在同一个搜索结果页面中批量提取该关键词下所有候选 SKU 的指标
+        for (const row of groupRows) {
+          const result = await extractSkuMetrics(page, row, keyword);
+          resultRows.push(result);
+          console.log(JSON.stringify({
+            item_id: result.item_id,
+            source_product_id: result.source_product_id,
+            crawl_status: result.crawl_status,
+            positive_rate: result.positive_rate,
+            review_count: result.review_count,
+            shop_score: result.shop_score,
+          }));
+        }
+
+        writeCsv(outputPath, resultRows);
+      }
     }
   } finally {
     if (context) {
@@ -395,6 +339,7 @@ async function main() {
   }
 
   writeCsv(outputPath, resultRows);
+  console.log(`Processed ${rows.length} candidates across ${resultRows.length} records.`);
   console.log(`CSV output: ${outputPath}`);
 }
 

@@ -30,7 +30,7 @@ docker compose down --remove-orphans
 echo -e "${GREEN}Compose services stopped.${NC}"
 
 echo -e "\n${GREEN}[3/3] Notes${NC}"
-echo -e "${YELLOW}Local MySQL service is not managed by this script and was left untouched.${NC}"
+echo -e "${YELLOW}Compose-managed MySQL is stopped with the project. Data remains in the mysql_data Docker volume.${NC}"
 
 echo -e "\n${YELLOW}==============================================${NC}"
 echo -e "${GREEN}Stop completed.${NC}"

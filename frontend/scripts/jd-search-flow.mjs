@@ -17,22 +17,22 @@ const START_PAGE_URL = "https://www.jd.com/";
 
 export async function searchKeywordLikeHuman(page, keyword, logger = console) {
   await ensureSearchEntry(page, logger);
-  await pause(page, 700, 1400);
+  await pause(page, 300, 700);
   await moveMouseNaturally(page);
 
   const input = await waitForVisibleLocator(page, SEARCH_INPUT_SELECTORS, 15000);
   await focusInputSafely(input);
-  await pause(page, 200, 500);
+  await pause(page, 100, 250);
   await page.keyboard.press("ControlOrMeta+A");
-  await pause(page, 120, 260);
+  await pause(page, 60, 130);
   await page.keyboard.press("Backspace");
-  await pause(page, 180, 360);
+  await pause(page, 80, 180);
   await typeLikeHuman(page, keyword);
-  await pause(page, 300, 800);
-  await input.press("Enter", { delay: randomBetween(80, 160) });
+  await pause(page, 150, 400);
+  await input.press("Enter", { delay: randomBetween(50, 100) });
 
   await waitForSearchResults(page, logger);
-  await pause(page, 1200, 2200);
+  await pause(page, 600, 1200);
 }
 
 export async function humanizeSearchResultsPage(page) {
@@ -60,7 +60,7 @@ async function ensureSearchEntry(page, logger) {
 
 async function waitForSearchResults(page, logger) {
   await page.waitForLoadState("domcontentloaded", { timeout: 60000 }).catch(() => {});
-  const deadline = Date.now() + 30000;
+  const deadline = Date.now() + 20000;
   while (Date.now() < deadline) {
     const currentUrl = page.url() || "";
     if (currentUrl.includes("search.jd.com/Search")) {
@@ -90,9 +90,9 @@ async function waitForSearchResults(page, logger) {
 
 async function typeLikeHuman(page, text) {
   for (const char of String(text || "")) {
-    await page.keyboard.type(char, { delay: randomBetween(90, 220) });
-    if (Math.random() < 0.18) {
-      await pause(page, 120, 320);
+    await page.keyboard.type(char, { delay: randomBetween(40, 120) });
+    if (Math.random() < 0.1) {
+      await pause(page, 60, 160);
     }
   }
 }

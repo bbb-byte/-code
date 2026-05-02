@@ -166,7 +166,7 @@ try {
         New-Item -ItemType Directory -Path $RuntimeProfileDir -Force | Out-Null
     }
     Write-Step "Runtime directory ready: $RuntimeProfileDir" Green
-    Write-Step "Using local MySQL from .env. Please make sure your host MySQL service is already running." Yellow
+    Write-Step "MySQL is managed by docker compose by default. If you configured host MySQL in .env, make sure it is running." Yellow
 
     $composeArgs = @('compose', 'up', '-d')
     if ($Build) {

@@ -114,6 +114,20 @@ function writeCsv(filePath, rows) {
   fs.writeFileSync(filePath, content, "utf8");
 }
 
+async function withTimeout(promiseFactory, timeoutMs, label) {
+  let timer = null;
+  try {
+    return await Promise.race([
+      promiseFactory(),
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`${label} timed out after ${Math.round(timeoutMs / 1000)}s`)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 function extractCategoryKeyword(categoryName) {
   if (!categoryName) return "";
   const parts = categoryName.split(/[>/|.]/).map((part) => part.trim()).filter(Boolean);
@@ -127,10 +141,11 @@ function buildKeyword(product) {
 }
 
 async function recallOne(page, keyword, topK) {
+  console.log(`Searching JD via search box: "${keyword}"`);
   await searchKeywordLikeHuman(page, keyword, console);
 
   let snapshot = null;
-  const deadline = Date.now() + 5 * 60 * 1000;
+  const deadline = Date.now() + 45000;
   while (Date.now() < deadline) {
     await page.waitForTimeout(2500);
     try {
@@ -301,12 +316,14 @@ async function main() {
     const cdpConnection = await connectOverCdpWithFallback(chromium, args.cdpUrl, console);
     browser = cdpConnection.browser;
     const contexts = browser.contexts();
-    if (contexts.length > 0) {
-      page = contexts[0].pages()[0] || await contexts[0].newPage();
-    } else {
-      // 某些 CDP 连接可能没有已有 context
-      const newContext = await browser.newContext({ viewport: { width: 1440, height: 960 }, locale: "zh-CN" });
-      page = await newContext.newPage();
+    const allPages = contexts.flatMap((ctx) => ctx.pages());
+    // 优先选择 JD 页面；其次选任意非 chrome:// 内部页；最后新建
+    page = allPages.find((p) => (p.url() || "").includes("jd.com"))
+      || allPages.find((p) => !(p.url() || "").startsWith("chrome://"))
+      || null;
+    if (!page) {
+      const ctx = contexts.length > 0 ? contexts[0] : await browser.newContext({ viewport: { width: 1440, height: 960 }, locale: "zh-CN" });
+      page = await ctx.newPage();
     }
     console.log(`Connected to CDP via ${cdpConnection.connectedUrl}. Current page: ${page.url()}`);
   } else {
@@ -329,15 +346,35 @@ async function main() {
   let cacheHits = 0;
 
   try {
-    for (const product of products) {
+    for (let index = 0; index < products.length; index += 1) {
+      const product = products[index];
       const keyword = buildKeyword(product);
       let result = keywordCache.get(keyword);
       let cacheHit = true;
+      console.log(`Recalling ${index + 1}/${products.length}: item=${product.item_id}, keyword="${keyword}"`);
       if (result) {
         cacheHits += 1;
       } else {
         cacheHit = false;
-        result = await recallOne(page, keyword, args.topK);
+        try {
+          result = await withTimeout(
+            () => recallOne(page, keyword, args.topK),
+            120000,
+            `Recall item ${product.item_id} keyword "${keyword}"`,
+          );
+        } catch (error) {
+          console.log(`Recall failed for item=${product.item_id}, keyword="${keyword}": ${error.message}`);
+          result = {
+            keyword,
+            href: page.url(),
+            title: await page.title().catch(() => ""),
+            isLogin: false,
+            hasRisk: false,
+            html: await page.content().catch(() => ""),
+            candidates: [],
+            error: error.message,
+          };
+        }
         keywordCache.set(keyword, result);
       }
       if (result.isLogin) loginHits += 1;
@@ -370,9 +407,11 @@ async function main() {
           candidateCount: result.candidates.length,
           login: result.isLogin,
           risk: result.hasRisk,
+          error: result.error || "",
           cacheHit,
         }),
       );
+      writeCsv(outputPath, allRows);
       if (!cacheHit) {
         await page.waitForTimeout(1800 + Math.floor(Math.random() * 2200));
       }

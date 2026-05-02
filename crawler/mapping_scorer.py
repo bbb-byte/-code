@@ -163,8 +163,12 @@ def brand_score(internal_brand: str, public_brand: str, public_title: str) -> fl
     title_simple = simplify_text(public_title)
     if public_simple and internal_simple and internal_simple == public_simple:
         return 0.30
+    # 品牌名出现在标题中（搜索结果页 public_brand 通常是店铺名，标题更可靠）
     if internal_simple and title_simple and internal_simple in title_simple:
-        return 0.25
+        return 0.30
+    # public_brand 是店铺名时做部分包含判断
+    if public_simple and internal_simple and (internal_simple in public_simple or public_simple in internal_simple):
+        return 0.15
     return 0.0
 
 
@@ -191,7 +195,7 @@ def category_score(internal_category: str, public_category: str) -> float:
 def price_score(internal_price: Optional[float], public_price: Optional[float]) -> float:
     """价格接近可以显著提升可信度；内部价格缺失时只给极小兜底分。"""
     if internal_price is None or internal_price <= 0:
-        return 0.05
+        return 0.02
     if public_price is None or public_price <= 0:
         return 0.0
     gap_ratio = abs(public_price - internal_price) / internal_price
@@ -203,7 +207,7 @@ def price_score(internal_price: Optional[float], public_price: Optional[float]) 
 
 
 def title_score(internal_brand: str, internal_category: str, public_title: str) -> float:
-    """标题命中是品牌和类目命中的补充证据。"""
+    """标题命中是品牌和类目命中的补充证据；搜索结果页场景下标题是最主要的可比字段。"""
     if not public_title:
         return 0.0
     title_tokens = tokenize(public_title)
@@ -212,25 +216,31 @@ def title_score(internal_brand: str, internal_category: str, public_title: str) 
     brand_hit = bool(brand_tokens and brand_tokens <= title_tokens) or bool(brand_tokens & title_tokens)
     category_hit = bool(category_tokens and category_tokens & title_tokens)
     if brand_hit and category_hit:
-        return 0.15
-    if brand_hit or category_hit:
-        return 0.08
+        return 0.25
+    if brand_hit:
+        return 0.18
+    if category_hit:
+        return 0.10
     return 0.0
 
 
 def evidence_score(candidate: CandidateProduct) -> float:
-    """候选商品的字段越完整，可人工复核的证据越充分。"""
+    """候选商品的字段越完整，可人工复核的证据越充分；标题非空也算一项基础证据。"""
     evidence_count = 0
+    if candidate.public_title:
+        evidence_count += 1
     if candidate.public_brand:
         evidence_count += 1
     if candidate.public_category:
         evidence_count += 1
     if candidate.public_price is not None and candidate.public_price > 0:
         evidence_count += 1
-    if evidence_count >= 2:
+    if evidence_count >= 3:
         return 0.10
+    if evidence_count >= 2:
+        return 0.07
     if evidence_count == 1:
-        return 0.05
+        return 0.03
     return 0.0
 
 

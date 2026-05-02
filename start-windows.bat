@@ -67,7 +67,7 @@ echo.
 echo [3/6] Preparing runtime directories...
 if not exist "%RUNTIME_DIR%" mkdir "%RUNTIME_DIR%"
 echo Runtime directory ready: %RUNTIME_DIR%
-echo Using local MySQL from .env. Please make sure your host MySQL service is already running.
+echo MySQL is managed by docker compose by default. If you configured host MySQL in .env, make sure it is running.
 
 echo.
 echo [4/6] Starting services...

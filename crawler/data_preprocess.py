@@ -2,9 +2,9 @@ import sys
 import io
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 
+import argparse
 import pandas as pd
 import numpy as np
-import pymysql
 import hashlib
 from datetime import datetime
 from sklearn.preprocessing import LabelEncoder, MinMaxScaler
@@ -21,19 +21,19 @@ warnings.filterwarnings('ignore')
 # 数据类型转换、数据归一化，最终将清洗后的结构化数据存入MySQL数据库。
 # ==========================================
 
-# ---------- 数据库连接配置 ----------
-DB_CONFIG = {
-    'host': 'localhost',
-    'port': 3306,
-    'user': 'root',
-    'password': 'root123',
-    'database': 'ecommerce_analysis',
-    'charset': 'utf8mb4'
-}
-
 # ---------- CSV文件路径 ----------
 # 使用真实的 archive 数据集 sample
-CSV_FILE = '../archive/2020-Apr-demo.csv'
+DEFAULT_CSV_FILE = 'archive/2020-Apr-demo.csv'
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(description="Preprocess an archive/Kaggle ecommerce CSV sample.")
+    parser.add_argument(
+        "--csv",
+        default=DEFAULT_CSV_FILE,
+        help=f"CSV file to preprocess. Default: {DEFAULT_CSV_FILE}",
+    )
+    return parser.parse_args()
 
 def load_data(file_path):
     """
@@ -440,7 +440,8 @@ def save_to_database(df):
     print("  ✅ 全流程演示通过！")
 
 if __name__ == '__main__':
-    df = load_data(CSV_FILE)
+    args = parse_args()
+    df = load_data(args.csv)
     df = handle_duplicates(df)
     df = handle_missing_values(df)
     df = handle_outliers(df)

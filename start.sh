@@ -51,7 +51,7 @@ fi
 echo -e "\n${GREEN}[3/5] Preparing runtime directories...${NC}"
 mkdir -p "$RUNTIME_DIR"
 echo -e "${GREEN}Runtime directory ready: $RUNTIME_DIR${NC}"
-echo -e "${YELLOW}Using local MySQL from .env. Please make sure your host MySQL service is already running.${NC}"
+echo -e "${YELLOW}MySQL is managed by docker compose by default. If you configured host MySQL in .env, make sure it is running.${NC}"
 
 echo -e "\n${GREEN}[4/5] Starting services...${NC}"
 if [ "$BUILD_MODE" -eq 1 ]; then

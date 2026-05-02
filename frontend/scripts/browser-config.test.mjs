@@ -23,6 +23,7 @@ test("resolveCdpEndpointCandidates adds IPv4 fallbacks for hostnames", async () 
 
   assert.deepEqual(candidates, [
     "http://host.docker.internal:9222",
+    "http://127.0.0.1:9222",
     "http://192.168.65.2:9222",
   ]);
 });

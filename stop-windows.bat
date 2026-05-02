@@ -51,7 +51,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "Get-CimInstance Win32_Pr
 
 echo.
 echo [4/4] Notes
-echo Local MySQL service is not managed by this script and was left untouched.
+echo Compose-managed MySQL is stopped with the project. Data remains in the mysql_data Docker volume.
 
 echo.
 echo ==============================================

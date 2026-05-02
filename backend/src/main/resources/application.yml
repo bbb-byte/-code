@@ -15,7 +15,7 @@ spring:
     driver-class-name: com.mysql.cj.jdbc.Driver
     url: ${SPRING_DATASOURCE_URL:jdbc:mysql://localhost:3306/ecommerce_analysis?useUnicode=true&characterEncoding=utf-8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true&rewriteBatchedStatements=true}
     username: ${SPRING_DATASOURCE_USERNAME:root}
-    password: ${SPRING_DATASOURCE_PASSWORD:lmh041105666}
+    password: ${SPRING_DATASOURCE_PASSWORD:}
     hikari:
       # 将会话级 InnoDB 锁等待超时提高到 300 秒，减少大批量分析时的误超时
       connection-init-sql: SET SESSION innodb_lock_wait_timeout = 300
@@ -68,7 +68,7 @@ mybatis-plus:
 
 # JWT 配置
 jwt:
-  secret: ecommerce-behavior-analysis-secret-key-2024-very-long-secret-key
+  secret: ${JWT_SECRET:ecommerce-behavior-analysis-secret-key-2024-very-long-secret-key}
   expiration: 86400000  # 24小时
 
 # 日志配置
